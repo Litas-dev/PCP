@@ -1,4 +1,4 @@
-## PCP Client 1.4.0 (Now works with both 1.12.x and 1.14.x)
+## PCP Client 1.4.1 (Now works with both 1.12.x and 1.14.x)
 
 ### Download 
 **Press Code > Download zip**
