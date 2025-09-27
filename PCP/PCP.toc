@@ -4,8 +4,7 @@
 ## Notes-zhCN: PartyBot Control Panel for the SoloCraft server.
 ## Author: Leontiesh (Edited by Solo for SoloCraft.org) (re-edited by pumpan)
 ## DefaultState: Enabled
-## Version: 1.4.0
+## Version: 1.4.1
 ## SavedVariables: PCPButtonPosition
-
-PCP.lua
 PCP.xml
+PCP.lua

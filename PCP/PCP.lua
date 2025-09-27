@@ -1,82 +1,168 @@
+
+
 local version, build, date, tocversion = GetBuildInfo()
-local isVanilla = string.find(version, "^1.12")
+local isVanilla = string.find(version, "^1%.12") ~= nil
 
+if not PCPButtonFrame then
+    local parentFrame = Minimap
+    local width, height = 32, 32
 
--- Function to handle mouse enter event
-function PCPButtonFrame_OnEnter(self)
-    local frame = self or this  -- Use 'self' for 1.14+ or 'this' for 1.12.x
-    GameTooltip:SetOwner(frame, "ANCHOR_RIGHT")
-    GameTooltip:SetText("My Button Tooltip", 1, 1, 1)
-    GameTooltip:Show()
+    if isVanilla then
+        PCPButtonFrame = CreateFrame("Button", "PCPButtonFrame", parentFrame)
+    else
+        PCPButtonFrame = CreateFrame("Button", "PCPButtonFrame", parentFrame, "BackdropTemplate")
+    end
+
+    PCPButtonFrame:SetWidth(width, height)
+    PCPButtonFrame:SetHeight(height)	
+    PCPButtonFrame:SetPoint("TOP", parentFrame, "TOP", 0, 0)
+    PCPButtonFrame:EnableMouse(true)
+    PCPButtonFrame:SetMovable(true)
+    PCPButtonFrame:SetUserPlaced(true)
+    PCPButtonFrame:RegisterForDrag("RightButton")
+    PCPButtonFrame:SetFrameStrata("LOW")
+
+   
+    if isVanilla then
+        PCPButtonFrame:SetBackdrop({
+            bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+            edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+            tile = true, tileSize = 16, edgeSize = 16,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 }
+        })
+        PCPButtonFrame:SetBackdropColor(0, 0, 0, 0.5)
+    end
+
+   
+    PCPButtonFrame:SetNormalTexture("Interface\\AddOns\\PCP\\img\\SoloCraft.tga")
+    PCPButtonFrame:SetPushedTexture("Interface\\AddOns\\PCP\\img\\SoloCraft.tga")
+    PCPButtonFrame:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight", "ADD")
+
+   
+   
+   
+    local function SaveButtonPosition()
+        local point, relativeTo, relativePoint, xOffset, yOffset = PCPButtonFrame:GetPoint()
+        PCPButtonFrame.position = {point, relativeTo, relativePoint, xOffset, yOffset}
+    end
+
+    local function RestoreButtonPosition()
+        if PCPButtonFrame.position then
+            local point, relativeTo, relativePoint, xOffset, yOffset = unpack(PCPButtonFrame.position)
+            PCPButtonFrame:ClearAllPoints()
+            PCPButtonFrame:SetPoint(point, relativeTo, relativePoint, xOffset, yOffset)
+        end
+    end
+
+   
+   
+   
+    local dragStart, dragStop, onClick, onEnter, onLeave
+
+    if isVanilla then
+        dragStart = function() this:StartMoving() end
+        dragStop  = function() this:StopMovingOrSizing(); SaveButtonPosition() end
+        onClick   = function() PCPButtonFrame_Toggle() end
+        onEnter   = function()
+                        GameTooltip:SetOwner(this, "ANCHOR_RIGHT")
+                        GameTooltip:SetText("PartyBot Control Panel\nLeft Click: Toggle\nRight Click: Move", 1,1,1)
+                        GameTooltip:Show()
+                    end
+    else
+        dragStart = function(self) self:StartMoving() end
+        dragStop  = function(self) self:StopMovingOrSizing(); SaveButtonPosition() end
+        onClick   = function(self) PCPButtonFrame_Toggle() end
+        onEnter   = function(self)
+                        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                        GameTooltip:SetText("PartyBot Control Panel\nLeft Click: Toggle\nRight Click: Move", 1,1,1)
+                        GameTooltip:Show()
+                    end
+    end
+
+    onLeave = function() GameTooltip:Hide() end
+
+    PCPButtonFrame:SetScript("OnDragStart", dragStart)
+    PCPButtonFrame:SetScript("OnDragStop", dragStop)
+    PCPButtonFrame:SetScript("OnClick", onClick)
+    PCPButtonFrame:SetScript("OnEnter", onEnter)
+    PCPButtonFrame:SetScript("OnLeave", onLeave)
+
+    RestoreButtonPosition()
+    PCPButtonFrame:Show()
 end
 
--- Function to handle dragging the frame
-function PCPButtonFrame_BeingDragged()
-    local frame = PCPButtonFrame
-    local cursorX, cursorY = GetCursorPosition()
-    local scale = UIParent:GetEffectiveScale()
-    frame:SetPoint("CENTER", UIParent, "BOTTOMLEFT", cursorX / scale, cursorY / scale)
+local PCPFrameShown = false
+
+function PCPButtonFrame_Toggle()
+    if PCPFrameShown then
+        PCPFrame:Hide()
+    else
+        PCPFrame:Show()
+    end
+    PCPFrameShown = not PCPFrameShown
 end
 
--- Function to handle PLAYER_LOGIN event
 local function OnPlayerLogin(self, event)
-		local frame = self or this  -- Use 'self' for 1.14+ or 'this' for 1.12.x upcoming feature
-		if isVanilla then
-			print("Client:" .. version)
-
-		else
-			print("Client:" .. version)
-		end
+    if isVanilla then
+        print("Vanilla client loaded: " .. version)
+    else
+        print("Classic client loaded: " .. version)
+    end
 
     PCPButtonFrame:Show()
 end
 
--- Create a frame for handling events
-local frame = CreateFrame("Frame")
-frame:RegisterEvent("PLAYER_LOGIN")
+local eventFrame = CreateFrame("Frame")
+eventFrame:RegisterEvent("PLAYER_LOGIN")
+eventFrame:SetScript("OnEvent", OnPlayerLogin)
 
--- Set up the OnEvent script
-frame:SetScript("OnEvent", function(self, event, ...)
-    if event == "PLAYER_LOGIN" then
-        OnPlayerLogin(self, event)
-    end
-end)
 
--- OnLoad function for PCPFrame (to be called from XML)
-function PCPFrame_OnLoad()
-    PCPFrame:RegisterForDrag("LeftButton")
-    PCPFrame:Hide()  -- Initially hide the frame
+function PCPFrame_OnLoad(frame)
+    local f = isVanilla and this or frame
 
-    -- Register the PLAYER_LOGIN event
-    if isVanilla then
-        this:RegisterEvent("PLAYER_LOGIN")  -- 'this' for Vanilla
-    else
-        self:RegisterEvent("PLAYER_LOGIN")  -- 'self' for Classic Era
-    end
+    f:SetMovable(true)
+    f:EnableMouse(true)
+    f:RegisterForDrag("LeftButton")
+
+    f:SetScript("OnDragStart", function()
+        if isVanilla then
+            this:StartMoving()
+        else
+            frame:StartMoving()
+        end
+    end)
+
+    f:SetScript("OnDragStop", function()
+        if isVanilla then
+            this:StopMovingOrSizing()
+        else
+            frame:StopMovingOrSizing()
+        end
+    end)
+
+    f:Hide()
 end
 
 SLASH_MOVEFRAME1 = "/movepcp"
 SlashCmdList["MOVEFRAME"] = function()
-    if not PCPFrame then return end  -- Ensure the frame exists
+    if not PCPFrame then return end 
 
-    -- Get cursor position
+   
     local x, y = GetCursorPosition()
-    local scale = UIParent:GetEffectiveScale()  -- Adjust for UI scaling
+    local scale = UIParent:GetEffectiveScale() 
 
-    -- Convert to UIParent-relative coordinates
+   
     x = x / scale
     y = y / scale
 
-    -- Move frame to cursor position
+   
     PCPFrame:ClearAllPoints()
     PCPFrame:SetPoint("CENTER", UIParent, "BOTTOMLEFT", x, y)
 end
 
--- Addon by Leontiesh (Ace) (Edited by Solo for SoloCraft.org) 
 BINDING_HEADER_CCP = "PartyBot Control Panel";
 BINDING_NAME_CP = "Show/Hide PCP";
 
--- cmd
 CMD_PARTYBOT_CLONE = ".partybot clone";
 CMD_PARTYBOT_REMOVE = ".partybot remove";
 CMD_PARTYBOT_ADD = ".partybot add ";
@@ -1153,8 +1239,7 @@ function OpenFrame()
 	PCPFrame:Show();
 end
 
--- minimap button 
-local PCPFrameShown = true -- show frame by default
+local PCPFrameShown = true
 local PCPButtonPosition = 268
 
 function PCPButtonFrame_OnClick()
@@ -1162,7 +1247,7 @@ function PCPButtonFrame_OnClick()
 end
 
 function PCPButtonFrame_Init()
-    -- show frame by default
+   
 	if(PCPFrameShown) then
 		PCPFrame:Show();
 	else
@@ -1198,9 +1283,8 @@ function PCPButtonFrame_UpdatePosition()
 	PCPButtonFrame_Init();
 end
 
--- Thanks to Yatlas for self code
 function PCPButtonFrame_BeingDragged()
-    -- Thanks to Gello for self code
+   
     local xpos,ypos = GetCursorPosition() 
     local xmin,ymin = Minimap:GetLeft(), Minimap:GetBottom() 
 
@@ -1220,7 +1304,7 @@ function PCPButtonFrame_SetPosition(v)
 end
 
 SLASH_PCP1 = '/PCP'
-function SlashCmdList.PCP(msg, editbox) -- 4.
+function SlashCmdList.PCP(msg, editbox)
     if (msg == "" or msg == "cp") then
         if (PCPFrame:IsVisible()) then
             PCPFrame:Hide()
