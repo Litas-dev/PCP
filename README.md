@@ -1,3 +1,11 @@
+## Changelog
+### 1.4.1 - Custom
+- Version updated to `1.4.1 - Custom` (TOC + in-window version label).
+- Author metadata updated (adds: `re-re-redited by Arcticice`).
+- Version label positioned centered under the Close button (no overlap).
+- Improves compatibility with the FillRaidBots side buttons (FILL RAID / KICK ALL / REFILL):
+  - Keeps the buttons vertically centered to the PCP window when PCP sections are collapsed/expanded (unless FillRaidBots “move buttons” mode is enabled).
+
 ## PCP Client 1.4.1 (Now works with both 1.12.x and 1.14.x)
 
 ### Download 
