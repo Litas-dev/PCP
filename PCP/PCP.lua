@@ -1,9 +1,11 @@
-
-
 local version, build, date, tocversion = GetBuildInfo()
 local isVanilla = string.find(version, "^1%.12") ~= nil
 
+-- PCP supports both 1.12.x (“Vanilla” private server clients) and 1.13+/Classic clients.
+-- The biggest difference in this file is the old global `this` usage in 1.12 vs `self` in newer clients.
+
 if not PCPButtonFrame then
+    -- Creates the minimap button that toggles the main PCP window.
     local parentFrame = Minimap
     local width, height = 32, 32
 
@@ -41,11 +43,13 @@ if not PCPButtonFrame then
    
    
    
+    -- Saves the minimap button position while dragging it.
     local function SaveButtonPosition()
         local point, relativeTo, relativePoint, xOffset, yOffset = PCPButtonFrame:GetPoint()
         PCPButtonFrame.position = {point, relativeTo, relativePoint, xOffset, yOffset}
     end
 
+    -- Restores the minimap button position (if it was saved earlier).
     local function RestoreButtonPosition()
         if PCPButtonFrame.position then
             local point, relativeTo, relativePoint, xOffset, yOffset = unpack(PCPButtonFrame.position)
@@ -94,6 +98,7 @@ end
 local PCPFrameShown = false
 
 function PCPButtonFrame_Toggle()
+    -- Toggles the main PCP window.
     if PCPFrameShown then
         PCPFrame:Hide()
     else
@@ -103,6 +108,7 @@ function PCPButtonFrame_Toggle()
 end
 
 local function PCP_InitSettings()
+    -- Initializes saved variables and default “section enabled” state for the collapsible layout.
     if type(PCPSettings) ~= "table" then
         PCPSettings = {}
     end
@@ -130,6 +136,9 @@ end
 local PCP_AlignExternalButtons
 
 local function PCP_TryHookFillRaidBots(frame)
+    -- FillRaidBots repositions its buttons (FILL RAID / KICK ALL / REFILL) continuously and can
+    -- override any anchoring we do from PCP. To make PCP “win”, we hook FillRaidBots’
+    -- RepositionButtonsFromOffset() and apply our alignment after it runs.
     if _G.PCP_FRBHooked then return end
     if type(_G.RepositionButtonsFromOffset) ~= "function" then return end
 
@@ -150,6 +159,11 @@ local function PCP_TryHookFillRaidBots(frame)
 end
 
 PCP_AlignExternalButtons = function(frame)
+    -- Keeps external addon buttons aligned to the PCP frame when PCP changes height
+    -- (collapsing/expanding sections).
+    --
+    -- This targets FillRaidBots specifically by looking for the global button names it creates.
+    -- If the user enables FillRaidBots “move buttons” modes, we don’t interfere.
     if not frame or not frame.IsShown or not frame:IsShown() then return end
 
     PCP_TryHookFillRaidBots(frame)
@@ -179,6 +193,8 @@ PCP_AlignExternalButtons = function(frame)
         end
     end
 
+    -- Anchor frame used as a stable reference point on the left edge of PCP.
+    -- Other addons can also use PCPExternalLeftAnchor/PCPExternalRightAnchor if they want.
     local anchor = _G.PCPExternalLeftAnchor or frame
     local gap = 8
 
@@ -242,6 +258,12 @@ eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:SetScript("OnEvent", OnPlayerLogin)
 
 local function PCP_InitCollapsible(frame)
+    -- Builds a “collapsible sections” layout around the original XML UI.
+    -- It works by:
+    -- 1) Finding header FontStrings (section titles).
+    -- 2) Grouping other UI objects under the nearest header based on their original TOP-anchored Y offsets.
+    -- 3) Re-parenting those objects into per-section container frames.
+    -- 4) Recomputing the PCPFrame height when sections are hidden/shown.
     if frame._pcpLayout then return end
 
     local headerTextSet = {
@@ -382,6 +404,7 @@ local function PCP_InitCollapsible(frame)
         end
     end
 
+    -- Footer container: keeps Close + version label grouped and positioned consistently.
     local footer = CreateFrame("Frame", nil, frame)
     if closeButton then
         closeButton:SetParent(footer)
@@ -389,12 +412,15 @@ local function PCP_InitCollapsible(frame)
         closeButton:SetPoint("TOP", footer, "TOP", 0, -8)
     end
     if versionLabel then
+        -- Puts the version label centered under the Close button (instead of overlapping it).
         versionLabel:SetParent(footer)
         versionLabel:ClearAllPoints()
         versionLabel:SetPoint("BOTTOM", footer, "BOTTOM", 0, 6)
     end
 
     if not _G.PCPExternalLeftAnchor then
+        -- Small helper anchors at the left/right edge of PCPFrame.
+        -- External addons can anchor to these instead of doing GetLeft()/GetTop() math.
         local a = CreateFrame("Frame", "PCPExternalLeftAnchor", frame)
         a:SetSize(1, 1)
         a:Hide()
@@ -430,6 +456,8 @@ local function PCP_InitCollapsible(frame)
     layout.MeasureSectionHeight = MeasureSectionHeight
 
     function layout:Relayout()
+        -- Lays out all enabled sections from top to bottom, then places the footer.
+        -- Finally, it updates PCPFrame height to fit the visible content.
         local y = 6
         for _, sec in ipairs(self.sections) do
             if sec.enabled then
@@ -454,6 +482,7 @@ local function PCP_InitCollapsible(frame)
         frame:SetHeight(math.max(200, y))
 
         if _G.PCPExternalLeftAnchor then
+            -- Keep helper anchors glued to the current PCPFrame edges.
             _G.PCPExternalLeftAnchor:ClearAllPoints()
             _G.PCPExternalLeftAnchor:SetPoint("LEFT", frame, "LEFT", 0, 0)
             _G.PCPExternalLeftAnchor:Show()
@@ -464,6 +493,7 @@ local function PCP_InitCollapsible(frame)
             _G.PCPExternalRightAnchor:Show()
         end
 
+        -- Re-align external addon buttons after any size/layout change.
         PCP_AlignExternalButtons(frame)
     end
 
@@ -596,6 +626,8 @@ local function PCP_InitCollapsible(frame)
     frame._pcpLayout:Relayout()
 
     if not frame._pcpExternalAligner then
+        -- Safety net: some addons (like FillRaidBots) keep re-positioning their buttons.
+        -- This periodically re-applies our alignment so the buttons stay centered.
         local aligner = CreateFrame("Frame", nil, frame)
         local elapsedAcc = 0
         aligner:SetScript("OnUpdate", function(_, elapsed)
@@ -689,6 +721,8 @@ end
 
 SLASH_MOVEFRAME1 = "/movepcp"
 SlashCmdList["MOVEFRAME"] = function()
+    -- Slash command: move PCPFrame to your cursor position.
+    -- Usage: /movepcp (then your mouse position becomes the new frame center)
     if not PCPFrame then return end 
 
    
@@ -707,6 +741,7 @@ end
 BINDING_HEADER_CCP = "PartyBot Control Panel";
 BINDING_NAME_CP = "Show/Hide PCP";
 
+-- Chat command strings sent to the server (SoloCraft/PartyBot server commands).
 CMD_PARTYBOT_CLONE = ".partybot clone";
 CMD_PARTYBOT_REMOVE = ".partybot remove";
 CMD_PARTYBOT_ADD = ".partybot add ";
@@ -718,9 +753,11 @@ CMD_TOGGLE_HELM = ".partybot togglehelm ";
 CMD_TOGGLE_CLOAK = ".partybot togglecloak ";
 CMD_GENERAL = ".partybot ";
 
+-- UI state: current “selected” command/mark/toggle shown in the stacks.
 AddCmd = ""
 CmdItr = 1
 function CmdStackHide()
+	-- Hides all “command type” labels (All/Tank/Healer/...).
 	CmdAll:Hide()
 	CmdTank:Hide()
 	CmdHealer:Hide()
@@ -739,6 +776,7 @@ function CmdStackHide()
 end
 
 function CmdADD()
+	-- Cycles command type forward and updates the visible label.
 	Cmds = { "", "tank", "healer", "dps", "mdps", "rdps", "warrior", "paladin", "hunter", "rogue", "priest", "shaman", "mage", "warlock", "druid" }
 
 	CmdItr = CmdItr + 1	
@@ -763,6 +801,7 @@ function CmdADD()
 end
 
 function CmdSUB()
+	-- Cycles command type backward and updates the visible label.
 	Cmds = { "", "tank", "healer", "dps", "mdps", "rdps", "warrior", "paladin", "hunter", "rogue", "priest", "shaman", "mage", "warlock", "druid" }
 
 	CmdItr = CmdItr - 1	
@@ -787,25 +826,30 @@ function CmdSUB()
 end
 
 function SetCommand(arg)
+	-- Sends: .partybot <role/class/etc>
 		SendChatMessage(CMD_GENERAL .. arg);
 end
 
 function SetPause()
+	-- Sends: .partybot pause
 		SendChatMessage(CMD_GENERAL .. " pause ");
 end
 
 function SetUnpause()
+	-- Sends: .partybot unpause
 		SendChatMessage(CMD_GENERAL .. " unpause ");
 end
 
 AddMark = "ccmark"
 MarkItr = 1
 function MarkStackHide()
+	-- Hides all mark mode labels (ccmark/focusmark).
 	ccmark:Hide()
 	focusmark:Hide()
 end
 
 function MarkADD()
+	-- Cycles mark mode forward and updates the visible label.
 	Marks = { "ccmark", "focusmark" }
 
 	MarkItr = MarkItr + 1	
@@ -817,6 +861,7 @@ function MarkADD()
 end
 
 function MarkSUB()
+	-- Cycles mark mode backward and updates the visible label.
 	Marks = { "ccmark", "focusmark" }
 
 	MarkItr = MarkItr - 1	
@@ -828,24 +873,29 @@ function MarkSUB()
 end
 
 function SetMark(self, arg)
+	-- Sends: .partybot <markType> <markArg>
 	SendChatMessage(CMD_GENERAL .. AddMark .. " " .. arg);
 end
 
 function ShowMark()
+	-- Sends: .partybot <markType>
 	SendChatMessage(CMD_GENERAL .. AddMark);
 end
 
 function ClearMark()
+	-- Sends: .partybot clear <markType>
 	SendChatMessage(CMD_GENERAL .. "clear " .. AddMark);
 end
 
 function ClearAllMark()
+	-- Sends: .partybot clear
 	SendChatMessage(CMD_GENERAL .. "clear");
 end
 
 AddToggle = "aoe"
 ToggleItr = 1
 function ToggleStackHide()
+	-- Hides all toggle labels.
 	ToggleAOE:Hide()
 	ToggleHelmCloak:Hide()
 	helm:Hide()
@@ -853,6 +903,7 @@ function ToggleStackHide()
 end
 
 function ToggleADD()
+	-- Cycles toggle mode forward and updates the visible label.
 	Toggles = { "aoe", "ToggleHelmCloak", "helm", "cloak" }
 
 	ToggleItr = ToggleItr + 1	
@@ -866,6 +917,7 @@ function ToggleADD()
 end
 
 function ToggleSUB()
+	-- Cycles toggle mode backward and updates the visible label.
 	Toggles = { "aoe", "ToggleHelmCloak", "helm", "cloak" }
 
 	ToggleItr = ToggleItr - 1	
@@ -879,28 +931,35 @@ function ToggleSUB()
 end
 
 function SetToggle()
+	-- Sends: .partybot toggle <toggleName>
 	SendChatMessage(CMD_GENERAL .."toggle " .. AddToggle);
 end
 
 function SubPartyBotClone(self)
+	-- Sends: .partybot clone
 	SendChatMessage(CMD_PARTYBOT_CLONE);
 end
 
 function SubPartyBotRemove(self)
+	-- Sends: .partybot remove
 	SendChatMessage(CMD_PARTYBOT_REMOVE);
 end
 
 function SubPartyBotMoveAll()
+	-- Sends: .partybot moveall
 	SendChatMessage(CMD_PARTYBOT_MAll);
 end
 
 function SubPartyBotStayAll()
+	-- Sends: .partybot stayall
 	SendChatMessage(CMD_PARTYBOT_SAll);
 end
 
 AddClass = "warrior"
 ClassItr = 1
 function SetClassADD()
+	-- Cycles class forward and updates the class icon/label.
+	-- Also skips faction-only classes (Alliance paladin / Horde shaman).
 	Classes = { "warrior" , "paladin", "hunter", "rogue", "priest", "shaman", "mage", "warlock", "druid" }
 		
 	ClassItr = ClassItr + 1	
@@ -945,6 +1004,8 @@ function SetClassADD()
 end
 
 function SetClassSUB()
+	-- Cycles class backward and updates the class icon/label.
+	-- Also skips faction-only classes (Alliance paladin / Horde shaman).
 	Classes = { "warrior" , "paladin", "hunter", "rogue", "priest", "shaman", "mage", "warlock", "druid" }
 
 	ClassItr = ClassItr - 1		
@@ -989,6 +1050,7 @@ function SetClassSUB()
 end
 
 function RaceUpdate()
+	-- Updates the race selection defaults based on the currently selected class + player faction.
 	if Classes[ClassItr] == "warrior" then 
 		if UnitFactionGroup("player") == "Alliance" then 
 			RaceStackHide()
@@ -1109,6 +1171,8 @@ function RaceUpdate()
 end
 
 function RoleUpdate()
+	-- Updates the role selection defaults based on the currently selected class.
+	-- This controls what role string will be used for “Add PartyBot by role”.
 	if Classes[ClassItr] == "warrior" then 
 		RoleStackHide()
 		tank:Show()
@@ -1157,6 +1221,7 @@ function RoleUpdate()
 end
 
 function RaceStackHide()
+	-- Hides all race icons/labels in the race stack.
 	race:Hide()
 	human:Hide()
 	dwarf:Hide()
@@ -1171,6 +1236,7 @@ end
 AddRace = "race"
 RaceItr = 0
 function SetRaceADD()
+	-- Cycles race forward inside the current faction’s allowed race list for the chosen class.
 	if AddClass == "warrior" then	
 		if UnitFactionGroup("player") == "Alliance" then 
 			Races = { "human", "dwarf", "nightelf", "gnome", "race" }			
@@ -1335,6 +1401,7 @@ function SetRaceADD()
 end
 
 function SetRaceSUB()
+	-- Cycles race backward inside the current faction’s allowed race list for the chosen class.
 	if RaceItr == 0 then RaceItr = 5 end
 
 	if AddClass == "warrior" then	
@@ -1501,6 +1568,7 @@ function SetRaceSUB()
 end
 
 function RoleStackHide()
+	-- Hides all role icons/labels in the role stack.
 	tank:Hide()
 	healer:Hide()
 	meleedps:Hide()
@@ -1510,6 +1578,7 @@ end
 AddRole = "tank"
 RoleItr = 1
 function SetRoleADD()
+	-- Cycles role forward for the selected class (some classes have only one role option here).
 	if AddClass == "warrior" then
 		Roles = { "tank", "meleedps" }
 		
@@ -1596,6 +1665,7 @@ function SetRoleADD()
 end
 
 function SetRoleSUB()
+	-- Cycles role backward for the selected class.
 	if AddClass == "warrior" then
 		Roles = { "tank", "meleedps" }
 		
@@ -1682,6 +1752,7 @@ function SetRoleSUB()
 end
 
 function GenderStackHide()
+	-- Hides all gender icons/labels in the gender stack.
 	gender:Hide()
 	male:Hide()
 	female:Hide()
@@ -1690,6 +1761,7 @@ end
 AddGender = "gender"
 GenderItr = 1
 function SetGenderADD()
+	-- Cycles gender forward and updates the visible icon/label.
 		Genders = { "gender", "male", "female" }
 		
 		GenderItr = GenderItr + 1	
@@ -1702,6 +1774,7 @@ function SetGenderADD()
 end
 
 function SetGenderSUB()
+	-- Cycles gender backward and updates the visible icon/label.
 		Genders = { "gender", "male", "female" }
 
 		GenderItr = GenderItr - 1	
@@ -1716,12 +1789,14 @@ end
 AddBG = "warsong"
 BGItr = 1
 function BGStackHide()
+	-- Hides all battleground icons/labels in the BG stack.
 	warsong:Hide()
 	arathi:Hide()
 	alterac:Hide()
 end
 
 function SetBGADD()
+	-- Cycles battleground forward (Warsong/Arathi/Alterac).
 	BGS = { "warsong", "arathi", "alterac" }
 	
 	BGItr = BGItr + 1	
@@ -1734,6 +1809,7 @@ function SetBGADD()
 end
 
 function SetBGSUB()
+	-- Cycles battleground backward (Warsong/Arathi/Alterac).
 	BGS = { "warsong", "arathi", "alterac" }
 	
 	BGItr = BGItr - 1	
@@ -1746,14 +1822,18 @@ function SetBGSUB()
 end
 
 function SubPartyBotAddAdvanced(self)
+	-- Sends: .partybot add <class> <role> <gender>
+	-- Uses the currently selected values from the UI stacks.
 	SendChatMessage(CMD_PARTYBOT_ADD .. AddClass .. " " .. AddRole .. " " .. AddGender);
 end
 
 function SubPartyBotAdd(self, arg)
+	-- Sends: .partybot add <rawArg>
 	SendChatMessage(CMD_PARTYBOT_ADD .. arg);
 end
 
 function Brackets()
+	-- Picks a random bot level in your current PvP bracket (or 60 if you are 60).
 	if UnitLevel("player") >= 10 and UnitLevel("player") <= 19 then return math.random(10,19) 
 	elseif UnitLevel("player") >= 20 and UnitLevel("player") <= 29 then return math.random(20,29)
 	elseif UnitLevel("player") >= 30 and UnitLevel("player") <= 39 then return math.random(30,39)
@@ -1765,19 +1845,23 @@ function Brackets()
 end
 
 function SubBattleBotAdd(self, arg1, arg2)
+	-- Sends: .battlebot add <arg1> <arg2> <randomLevelFromBracket>
 	RanBotLevel = Brackets()
 	SendChatMessage(CMD_BATTLEBOT_ADD .. arg1 .. " " .. arg2 .. " " .. RanBotLevel);
 end
 
 function SubBattleGo(self, arg1)
+	-- Sends: .go <locationOrBG>
 	SendChatMessage(CMD_BATTLEGROUND_GO .. arg1);
 end
 
 function CloseFrame()
+	-- Closes the main PCP window (Close button).
 	PCPFrame:Hide();
 end
 
 function OpenFrame()
+	-- Opens the main PCP window and prints a loading message.
 	DEFAULT_CHAT_FRAME:AddMessage("Loading PartyBot Control Panel...");
 	DEFAULT_CHAT_FRAME:RegisterEvent('CHAT_MSG_SYSTEM')
 	PCPFrame:Show();
@@ -1786,11 +1870,17 @@ end
 local PCPFrameShown = true
 local PCPButtonPosition = 268
 
+-- Legacy minimap button code (circular minimap position math).
+-- Note: This is separate from the newer minimap button code at the top of the file.
+-- If you’re cleaning things up, you probably want to keep only one minimap-button system.
+
 function PCPButtonFrame_OnClick()
+	-- Legacy minimap button click handler: toggles PCPFrame.
 	PCPButtonFrame_Toggle();
 end
 
 function PCPButtonFrame_Init()
+	-- Legacy minimap button init: shows/hides PCPFrame based on PCPFrameShown flag.
    
 	if(PCPFrameShown) then
 		PCPFrame:Show();
@@ -1800,6 +1890,7 @@ function PCPButtonFrame_Init()
 end
 
 function PCPButtonFrame_Toggle()
+	-- Legacy minimap button toggle: toggles PCPFrame visibility and refreshes state.
 	if(PCPFrame:IsVisible()) then
 		PCPFrame:Hide();
 		PCPFrameShown = false;
@@ -1811,12 +1902,14 @@ function PCPButtonFrame_Toggle()
 end
 
 function PCPButtonFrame_OnEnter(self)
+	-- Legacy minimap button tooltip.
     GameTooltip:SetOwner(self, "ANCHOR_LEFT");
     GameTooltip:SetText("PartyBot Control Panel \n Press Left Click to Open/Close \n Hold Right Click to move the icon");
     GameTooltip:Show();
 end
 
 function PCPButtonFrame_UpdatePosition()
+	-- Legacy minimap button positioning around the minimap edge using angle math.
 	PCPButtonFrame:SetPoint(
 		"TOPLEFT",
 		"Minimap",
@@ -1828,6 +1921,7 @@ function PCPButtonFrame_UpdatePosition()
 end
 
 function PCPButtonFrame_BeingDragged()
+	-- Legacy minimap button drag handler: converts cursor position to an angle.
    
     local xpos,ypos = GetCursorPosition() 
     local xmin,ymin = Minimap:GetLeft(), Minimap:GetBottom() 
@@ -1839,6 +1933,7 @@ function PCPButtonFrame_BeingDragged()
 end
 
 function PCPButtonFrame_SetPosition(v)
+	-- Legacy minimap button setter: normalizes degrees then applies position.
     if(v < 0) then
         v = v + 360;
     end
@@ -1849,6 +1944,7 @@ end
 
 SLASH_PCP1 = '/PCP'
 function SlashCmdList.PCP(msg, editbox)
+	-- Slash command: /PCP or /PCP cp toggles the PCP window.
     if (msg == "" or msg == "cp") then
         if (PCPFrame:IsVisible()) then
             PCPFrame:Hide()
@@ -1859,6 +1955,7 @@ function SlashCmdList.PCP(msg, editbox)
 end
 
 function ShowToggle()
+	-- Convenience toggle used by keybind (Show/Hide PCP).
 	if (PCPFrame:IsVisible()) then
 		PCPFrame:Hide()
 	else
@@ -1867,6 +1964,7 @@ function ShowToggle()
 end
 
 function JoinWorld()
+	-- Joins the “World” chat channel if you’re not already in it.
 	id, name = GetChannelName(1)
 	if (name ~= "World") then
 		JoinChannelByName("World", nil, ChatFrame1:GetID(), 0)
