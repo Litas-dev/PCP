@@ -102,7 +102,132 @@ function PCPButtonFrame_Toggle()
     PCPFrameShown = not PCPFrameShown
 end
 
+local function PCP_InitSettings()
+    if type(PCPSettings) ~= "table" then
+        PCPSettings = {}
+    end
+    if type(PCPSettings.sectionEnabled) ~= "table" then
+        PCPSettings.sectionEnabled = {}
+    end
+
+    local defaults = {
+        ["PartyBot Configurator"] = true,
+        ["Add PartyBot by role"] = true,
+        ["Commands"] = true,
+        ["Come"] = true,
+        ["Move"] = true,
+        ["Stay"] = true,
+        ["Mark Configurator"] = true,
+    }
+
+    for key, value in pairs(defaults) do
+        if PCPSettings.sectionEnabled[key] == nil then
+            PCPSettings.sectionEnabled[key] = value
+        end
+    end
+end
+
+local PCP_AlignExternalButtons
+
+local function PCP_TryHookFillRaidBots(frame)
+    if _G.PCP_FRBHooked then return end
+    if type(_G.RepositionButtonsFromOffset) ~= "function" then return end
+
+    local orig = _G.RepositionButtonsFromOffset
+    local unpackFn = _G.unpack or (table and table.unpack)
+
+    _G.RepositionButtonsFromOffset = function(...)
+        local results = { orig(...) }
+        if PCP_AlignExternalButtons then
+            PCP_AlignExternalButtons(frame or _G.PCPFrame or _G.PCPFrameRemake)
+        end
+        if unpackFn then
+            return unpackFn(results)
+        end
+    end
+
+    _G.PCP_FRBHooked = true
+end
+
+PCP_AlignExternalButtons = function(frame)
+    if not frame or not frame.IsShown or not frame:IsShown() then return end
+
+    PCP_TryHookFillRaidBots(frame)
+
+    local openBtn = _G.OpenFillRaidButton
+    local kickBtn = _G.KickAllButton
+    local refillBtn = _G.reFillButton
+    if not openBtn and not kickBtn and not refillBtn then return end
+
+    if openBtn and openBtn.isMoving then return end
+
+    local frb = _G.FillRaidBotsSavedSettings
+    if type(frb) == "table" and (frb.moveButtonsEnabled or frb.moveButtonsRelative) then
+        return
+    end
+
+    local layout = "vertical"
+    local spacing = 10
+    if type(frb) == "table" then
+        if frb.ButtonLayout == true then
+            layout = "horizontal"
+        elseif type(frb.ButtonLayout) == "string" then
+            layout = frb.ButtonLayout
+        end
+        if type(frb.ButtonSpacing) == "number" then
+            spacing = frb.ButtonSpacing
+        end
+    end
+
+    local anchor = _G.PCPExternalLeftAnchor or frame
+    local gap = 8
+
+    local buttons = {}
+    if openBtn and openBtn.IsShown and openBtn:IsShown() then buttons[#buttons + 1] = openBtn end
+    if kickBtn and kickBtn.IsShown and kickBtn:IsShown() then buttons[#buttons + 1] = kickBtn end
+    if refillBtn and refillBtn.IsShown and refillBtn:IsShown() then buttons[#buttons + 1] = refillBtn end
+    if #buttons == 0 then return end
+
+    if layout == "horizontal" then
+        local rightmost = buttons[#buttons]
+        rightmost:ClearAllPoints()
+        rightmost:SetPoint("RIGHT", anchor, "LEFT", -gap, 0)
+
+        for i = #buttons - 1, 1, -1 do
+            local btn = buttons[i]
+            local nextBtn = buttons[i + 1]
+            btn:ClearAllPoints()
+            btn:SetPoint("RIGHT", nextBtn, "LEFT", -spacing, 0)
+        end
+        return
+    end
+
+    local totalH = 0
+    for i, btn in ipairs(buttons) do
+        local h = (btn.GetHeight and btn:GetHeight()) or 0
+        totalH = totalH + h
+        if i > 1 then
+            totalH = totalH + spacing
+        end
+    end
+
+    local firstBtn = buttons[1]
+    local firstH = (firstBtn.GetHeight and firstBtn:GetHeight()) or 0
+    local firstCenterY = (totalH / 2) - (firstH / 2)
+
+    firstBtn:ClearAllPoints()
+    firstBtn:SetPoint("RIGHT", anchor, "LEFT", -gap, firstCenterY)
+
+    for i = 2, #buttons do
+        local btn = buttons[i]
+        local prev = buttons[i - 1]
+        btn:ClearAllPoints()
+        btn:SetPoint("TOP", prev, "BOTTOM", 0, -spacing)
+    end
+end
+
 local function OnPlayerLogin(self, event)
+    PCP_InitSettings()
     if isVanilla then
         print("Vanilla client loaded: " .. version)
     else
@@ -116,6 +241,381 @@ local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:SetScript("OnEvent", OnPlayerLogin)
 
+local function PCP_InitCollapsible(frame)
+    if frame._pcpLayout then return end
+
+    local headerTextSet = {
+        ["PartyBot Configurator"] = true,
+        ["Add PartyBot by role"] = true,
+        ["Commands"] = true,
+        ["Come"] = true,
+        ["Move"] = true,
+        ["Stay"] = true,
+        ["Mark Configurator"] = true,
+    }
+
+    local headers = {}
+    for _, region in ipairs({ frame:GetRegions() }) do
+        if region and region.GetObjectType and region:GetObjectType() == "FontString" then
+            local text = region:GetText()
+            if text and headerTextSet[text] then
+                local point, relTo, relPoint, xOfs, yOfs = region:GetPoint(1)
+                if point and relPoint and (relTo == frame or relTo == nil) and string.find(relPoint, "TOP") and type(yOfs) == "number" then
+                    headers[#headers + 1] = {
+                        baseText = text,
+                        fontString = region,
+                        point = point,
+                        relPoint = relPoint,
+                        xOfs = xOfs or 0,
+                        yOfs = yOfs,
+                    }
+                end
+            end
+        end
+    end
+
+    if #headers == 0 then return end
+
+    table.sort(headers, function(a, b) return a.yOfs > b.yOfs end)
+
+    local sections = {}
+    for i, header in ipairs(headers) do
+        sections[#sections + 1] = {
+            key = header.baseText .. ":" .. tostring(i),
+            baseText = header.baseText,
+            header = header,
+            enabled = (type(PCPSettings) == "table"
+                and type(PCPSettings.sectionEnabled) == "table"
+                and PCPSettings.sectionEnabled[header.baseText] ~= false) or true,
+            items = {},
+            byObj = {},
+        }
+    end
+
+    local function FindSectionForY(yOfs)
+        local assigned = nil
+        for _, sec in ipairs(sections) do
+            if yOfs <= sec.header.yOfs then
+                assigned = sec
+            else
+                break
+            end
+        end
+        return assigned
+    end
+
+    local function AddTopAnchoredObject(obj)
+        if not obj or obj == frame._pcpBackdropFrame then return end
+
+        local point, relTo, relPoint, xOfs, yOfs = obj:GetPoint(1)
+        if not point or not relPoint or type(yOfs) ~= "number" then return end
+        if not ((relTo == frame) or (relTo == nil)) then return end
+        if not string.find(relPoint, "TOP") then return end
+
+        local sec = FindSectionForY(yOfs)
+        if not sec then return end
+
+        if sec.byObj[obj] then return end
+        sec.byObj[obj] = true
+
+        local item = {
+            obj = obj,
+            point = point,
+            relPoint = relPoint,
+            xOfs = xOfs or 0,
+            yOfs = yOfs,
+        }
+        sec.items[#sec.items + 1] = item
+    end
+
+    for _, child in ipairs({ frame:GetChildren() }) do
+        AddTopAnchoredObject(child)
+    end
+    for _, region in ipairs({ frame:GetRegions() }) do
+        if region and region.GetObjectType and region:GetObjectType() == "FontString" then
+            AddTopAnchoredObject(region)
+        end
+    end
+
+    local containers = {}
+    for _, sec in ipairs(sections) do
+        local container = CreateFrame("Frame", nil, frame)
+        sec.container = container
+        containers[#containers + 1] = container
+
+        local headerHForPad = sec.header.fontString:GetHeight() or 18
+        local topPad = -4
+        if sec.header.point and not string.find(sec.header.point, "TOP") then
+            topPad = -math.floor((headerHForPad / 2) + 2)
+        end
+        sec.topPad = topPad
+
+        for _, item in ipairs(sec.items) do
+            local obj = item.obj
+            if obj and obj.SetParent then
+                obj:SetParent(container)
+                obj:ClearAllPoints()
+                item.newY = (item.yOfs - sec.header.yOfs) + topPad
+                obj:SetPoint(item.point, container, item.relPoint, item.xOfs, item.newY)
+            end
+        end
+
+        sec.header.fontString:SetText(sec.baseText)
+    end
+
+    local closeButton = nil
+    for _, child in ipairs({ frame:GetChildren() }) do
+        if child and child.GetName and child:GetName() == "CloseButton" then
+            closeButton = child
+            break
+        end
+    end
+
+    local versionLabel = nil
+    for _, region in ipairs({ frame:GetRegions() }) do
+        if region and region.GetObjectType and region:GetObjectType() == "FontString" then
+            local text = region:GetText()
+            if text and string.find(text, "^v%d") then
+                versionLabel = region
+                break
+            end
+        end
+    end
+
+    local footer = CreateFrame("Frame", nil, frame)
+    if closeButton then
+        closeButton:SetParent(footer)
+        closeButton:ClearAllPoints()
+        closeButton:SetPoint("TOP", footer, "TOP", 0, -8)
+    end
+    if versionLabel then
+        versionLabel:SetParent(footer)
+        versionLabel:ClearAllPoints()
+        versionLabel:SetPoint("BOTTOM", footer, "BOTTOM", 0, 6)
+    end
+
+    if not _G.PCPExternalLeftAnchor then
+        local a = CreateFrame("Frame", "PCPExternalLeftAnchor", frame)
+        a:SetSize(1, 1)
+        a:Hide()
+        _G.PCPExternalLeftAnchor = a
+    end
+    if not _G.PCPExternalRightAnchor then
+        local a = CreateFrame("Frame", "PCPExternalRightAnchor", frame)
+        a:SetSize(1, 1)
+        a:Hide()
+        _G.PCPExternalRightAnchor = a
+    end
+
+    local function MeasureSectionHeight(sec)
+        local headerH = sec.header.fontString:GetHeight() or 18
+        local topPadLocal = sec.topPad or -4
+        local maxDepth = (-topPadLocal) + headerH + 8
+        for _, item in ipairs(sec.items) do
+            local obj = item.obj
+            if obj and obj ~= sec.header.fontString and obj:IsShown() then
+                local h = (obj.GetHeight and obj:GetHeight()) or (obj.GetStringHeight and obj:GetStringHeight()) or 0
+                local depth = (- (item.newY or 0)) + h + 8
+                if depth > maxDepth then
+                    maxDepth = depth
+                end
+            end
+        end
+        return maxDepth
+    end
+
+    local layout = {}
+    layout.sections = sections
+    layout.footer = footer
+    layout.MeasureSectionHeight = MeasureSectionHeight
+
+    function layout:Relayout()
+        local y = 6
+        for _, sec in ipairs(self.sections) do
+            if sec.enabled then
+                sec.container:Show()
+            sec.container:ClearAllPoints()
+            sec.container:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -y)
+            sec.container:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, -y)
+            local h = self.MeasureSectionHeight(sec)
+            sec.container:SetHeight(h)
+            y = y + h
+            else
+                sec.container:Hide()
+            end
+        end
+
+        self.footer:ClearAllPoints()
+        self.footer:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -y)
+        self.footer:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, -y)
+        self.footer:SetHeight(70)
+        y = y + 70 + 6
+
+        frame:SetHeight(math.max(200, y))
+
+        if _G.PCPExternalLeftAnchor then
+            _G.PCPExternalLeftAnchor:ClearAllPoints()
+            _G.PCPExternalLeftAnchor:SetPoint("LEFT", frame, "LEFT", 0, 0)
+            _G.PCPExternalLeftAnchor:Show()
+        end
+        if _G.PCPExternalRightAnchor then
+            _G.PCPExternalRightAnchor:ClearAllPoints()
+            _G.PCPExternalRightAnchor:SetPoint("RIGHT", frame, "RIGHT", 0, 0)
+            _G.PCPExternalRightAnchor:Show()
+        end
+
+        PCP_AlignExternalButtons(frame)
+    end
+
+    if not frame._pcpOptionsButton then
+        local optionsButton = CreateFrame("Button", nil, frame)
+        optionsButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -10, -10)
+        optionsButton:SetSize(18, 18)
+        optionsButton:SetNormalTexture("Interface\\Buttons\\UI-OptionsButton")
+        optionsButton:SetPushedTexture("Interface\\Buttons\\UI-OptionsButton")
+        optionsButton:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+        optionsButton:SetFrameLevel(frame:GetFrameLevel() + 100)
+
+        optionsButton:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Options", 1, 1, 1)
+            GameTooltip:Show()
+        end)
+        optionsButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+        local function SetSectionEnabled(sec, enabled)
+            sec.enabled = enabled and true or false
+            if type(PCPSettings) == "table" and type(PCPSettings.sectionEnabled) == "table" then
+                PCPSettings.sectionEnabled[sec.baseText] = sec.enabled
+            end
+        end
+
+        local function ShowMenu()
+            local menu = {
+                { text = "Sections", isTitle = true, notCheckable = true },
+            }
+
+            for _, sec in ipairs(frame._pcpLayout.sections) do
+                menu[#menu + 1] = {
+                    text = sec.baseText,
+                    keepShownOnClick = true,
+                    isNotRadio = true,
+                    checked = function() return sec.enabled end,
+                    func = function()
+                        SetSectionEnabled(sec, not sec.enabled)
+                        frame._pcpLayout:Relayout()
+                    end,
+                }
+            end
+
+            menu[#menu + 1] = { text = "", notCheckable = true, disabled = true }
+            menu[#menu + 1] = {
+                text = "Show All",
+                notCheckable = true,
+                func = function()
+                    for _, sec in ipairs(frame._pcpLayout.sections) do
+                        SetSectionEnabled(sec, true)
+                    end
+                    frame._pcpLayout:Relayout()
+                end,
+            }
+            menu[#menu + 1] = {
+                text = "Hide All",
+                notCheckable = true,
+                func = function()
+                    for _, sec in ipairs(frame._pcpLayout.sections) do
+                        SetSectionEnabled(sec, false)
+                    end
+                    frame._pcpLayout:Relayout()
+                end,
+            }
+
+            if EasyMenu then
+                if not frame._pcpOptionsMenuFrame then
+                    frame._pcpOptionsMenuFrame = CreateFrame("Frame", "PCPOptionsMenuFrame", UIParent, "UIDropDownMenuTemplate")
+                end
+                EasyMenu(menu, frame._pcpOptionsMenuFrame, "cursor", 0, 0, "MENU", 2)
+            else
+                if not frame._pcpOptionsPopup then
+                    local popup = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+                    popup:SetPoint("TOPRIGHT", optionsButton, "BOTTOMRIGHT", 0, -6)
+                    local popupHeight = (#frame._pcpLayout.sections * 24) + 24
+                    popup:SetSize(200, popupHeight)
+                    popup:SetFrameLevel(frame:GetFrameLevel() + 200)
+                    popup:SetBackdrop({
+                        bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+                        edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+                        tile = true,
+                        tileSize = 16,
+                        edgeSize = 16,
+                        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+                    })
+                    popup:SetBackdropColor(0, 0, 0, 0.9)
+
+                    local y = -10
+                    popup.checks = {}
+                    for _, sec in ipairs(frame._pcpLayout.sections) do
+                        local cb = CreateFrame("CheckButton", nil, popup, "UICheckButtonTemplate")
+                        cb:SetPoint("TOPLEFT", popup, "TOPLEFT", 10, y)
+                        cb:SetHitRectInsets(0, -140, 0, 0)
+                        local label = cb:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+                        label:SetPoint("LEFT", cb, "RIGHT", 4, 1)
+                        label:SetText(sec.baseText)
+                        cb._pcpLabel = label
+                        cb:SetChecked(sec.enabled)
+                        cb:SetScript("OnClick", function(self)
+                            SetSectionEnabled(sec, self:GetChecked())
+                            frame._pcpLayout:Relayout()
+                        end)
+                        popup.checks[#popup.checks + 1] = cb
+                        y = y - 24
+                    end
+                    frame._pcpOptionsPopup = popup
+                end
+
+                local popup = frame._pcpOptionsPopup
+                if popup:IsShown() then
+                    popup:Hide()
+                else
+                    for i, sec in ipairs(frame._pcpLayout.sections) do
+                        local cb = popup.checks[i]
+                        if cb then
+                            cb:SetChecked(sec.enabled)
+                        end
+                    end
+                    popup:Show()
+                end
+            end
+        end
+
+        optionsButton:SetScript("OnClick", ShowMenu)
+        frame._pcpOptionsButton = optionsButton
+    end
+
+    frame._pcpLayout = layout
+    frame._pcpLayout:Relayout()
+
+    if not frame._pcpExternalAligner then
+        local aligner = CreateFrame("Frame", nil, frame)
+        local elapsedAcc = 0
+        aligner:SetScript("OnUpdate", function(_, elapsed)
+            elapsedAcc = elapsedAcc + elapsed
+            if elapsedAcc >= 0.05 then
+                elapsedAcc = 0
+                PCP_AlignExternalButtons(frame)
+            end
+        end)
+        frame._pcpExternalAligner = aligner
+    end
+end
+
+local function PCPFrame_OnShow(frame)
+    PCP_InitCollapsible(frame)
+    if frame._pcpLayout then
+        frame._pcpLayout:Relayout()
+    end
+end
+
 
 function PCPFrame_OnLoad(frame)
     local f = isVanilla and this or frame
@@ -123,6 +623,41 @@ function PCPFrame_OnLoad(frame)
     f:SetMovable(true)
     f:EnableMouse(true)
     f:RegisterForDrag("LeftButton")
+
+    if not isVanilla and not f._pcpBackdropApplied then
+        local backdropConfig = {
+            bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+            edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+            tile = true,
+            tileSize = 32,
+            edgeSize = 16,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 },
+        }
+
+        local function ApplyBackdrop(target)
+            if not target or type(target.SetBackdrop) ~= "function" then return false end
+            target:SetBackdrop(backdropConfig)
+            if type(target.SetBackdropColor) == "function" then
+                target:SetBackdropColor(0, 0, 0, 0.4)
+            end
+            if type(target.SetBackdropBorderColor) == "function" then
+                target:SetBackdropBorderColor(1, 1, 1, 1)
+            end
+            return true
+        end
+
+        if not ApplyBackdrop(f) then
+            local backdropFrame = CreateFrame("Frame", nil, f, "BackdropTemplate")
+            backdropFrame:SetAllPoints(f)
+            backdropFrame:SetFrameStrata(f:GetFrameStrata())
+            local level = f:GetFrameLevel()
+            backdropFrame:SetFrameLevel(level > 0 and (level - 1) or 0)
+            ApplyBackdrop(backdropFrame)
+            f._pcpBackdropFrame = backdropFrame
+        end
+
+        f._pcpBackdropApplied = true
+    end
 
     f:SetScript("OnDragStart", function()
         if isVanilla then
@@ -139,6 +674,15 @@ function PCPFrame_OnLoad(frame)
             frame:StopMovingOrSizing()
         end
     end)
+
+    if f.HookScript then
+        if not f._pcpOnShowHooked then
+            f:HookScript("OnShow", PCPFrame_OnShow)
+            f._pcpOnShowHooked = true
+        end
+    elseif not f:GetScript("OnShow") then
+        f:SetScript("OnShow", PCPFrame_OnShow)
+    end
 
     f:Hide()
 end

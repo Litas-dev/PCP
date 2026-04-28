@@ -3,7 +3,7 @@
 
 	<Script file="PCP.lua" />
 
-	<Frame name="PCPFrame" parent="UIParent" toplevel="true" enableMouse="true" movable="true">
+	<Frame name="PCPFrame" parent="UIParent" toplevel="true" enableMouse="true" movable="true" inherits="BackdropTemplate">
 
 		<Scripts>
 			<!-- <OnLoad>PCPFrame:RegisterForDrag("LeftButton");PCPFrame:Hide();this:RegisterEvent("PLAYER_LOGIN");</OnLoad> -->
@@ -22,17 +22,17 @@
 			</Anchor>
 		</Anchors>
 
-		<Backdrop bgFile="Interface\Tooltips\UI-Tooltip-Background" edgeFile="Interface\DialogFrame\UI-DialogBox-Border"  tile="true">
+		<Backdrop bgFile="Interface\Tooltips\UI-Tooltip-Background" edgeFile="Interface\Tooltips\UI-Tooltip-Border"  tile="true">
 			<BackgroundInsets>
-				<AbsInset left="12" right="12" top="12" bottom="12" />
+				<AbsInset left="4" right="4" top="4" bottom="4" />
 			</BackgroundInsets>
 			<TileSize>
 				<AbsValue val="32" />
 			</TileSize>
 			<EdgeSize>
-				<AbsValue val="40" />
+				<AbsValue val="16" />
 			</EdgeSize>			
-			<Color r = "0" g = "0" b = "0" a = "100" />				
+			<Color r = "0" g = "0" b = "0" a = "0.4" />				
 		</Backdrop>
 
 		<!-- overlay labels layer for below buttons frame-->
@@ -121,7 +121,7 @@
 					</Anchors>
 				</FontString>
 
-				<FontString name="version" inherits="GameFontHighlightSmallOutline" text="v1.4.1">
+				<FontString name="version" inherits="GameFontHighlightSmallOutline" text="v1.4.1 - Custom">
 					<Size x="220" y="20" />
 					<Anchors>
 						<Anchor point="CENTER" relativePoint="BOTTOMRIGHT">
