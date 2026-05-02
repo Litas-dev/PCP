@@ -1,11 +1,284 @@
+
+
 local version, build, date, tocversion = GetBuildInfo()
 local isVanilla = string.find(version, "^1%.12") ~= nil
 
--- PCP supports both 1.12.x (“Vanilla” private server clients) and 1.13+/Classic clients.
--- The biggest difference in this file is the old global `this` usage in 1.12 vs `self` in newer clients.
+local function PCP_GetAddonVersion()
+    local v = nil
+    if GetAddOnMetadata then
+        v = GetAddOnMetadata("PCP", "Version")
+    end
+    if type(v) ~= "string" or v == "" then
+        v = "0.0.0"
+    end
+    return v
+end
 
-if not PCPButtonFrame then
-    -- Creates the minimap button that toggles the main PCP window.
+local function PCP_ParseSemver(v)
+    if type(v) ~= "string" then return 0, 0, 0 end
+    local maj, min, pat = string.match(v, "(%d+)%.(%d+)%.(%d+)")
+    return tonumber(maj) or 0, tonumber(min) or 0, tonumber(pat) or 0
+end
+
+local function PCP_IsNewerVersion(remote, localV)
+    local r1, r2, r3 = PCP_ParseSemver(remote)
+    local l1, l2, l3 = PCP_ParseSemver(localV)
+    if r1 ~= l1 then return r1 > l1 end
+    if r2 ~= l2 then return r2 > l2 end
+    return r3 > l3
+end
+
+local PCP_UPDATE_PREFIX = "PCP_VER"
+local PCP_RELEASES_URL = "https://github.com/Litas-dev/PCP/releases"
+local pcpLastVersionBroadcastAt = 0
+
+local function PCP_RegisterAddonPrefix()
+    if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
+        C_ChatInfo.RegisterAddonMessagePrefix(PCP_UPDATE_PREFIX)
+    elseif RegisterAddonMessagePrefix then
+        RegisterAddonMessagePrefix(PCP_UPDATE_PREFIX)
+    end
+end
+
+local function PCP_SendAddonMessage(prefix, message, channel, target)
+    if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+        C_ChatInfo.SendAddonMessage(prefix, message, channel, target)
+    elseif SendAddonMessage then
+        SendAddonMessage(prefix, message, channel, target)
+    end
+end
+
+local function PCP_BroadcastVersion()
+    local now = (GetTime and GetTime()) or 0
+    if now > 0 and (now - (pcpLastVersionBroadcastAt or 0)) < 30 then
+        return
+    end
+    pcpLastVersionBroadcastAt = now
+
+    local v = PCP_GetAddonVersion()
+
+    if IsInGuild and IsInGuild() then
+        PCP_SendAddonMessage(PCP_UPDATE_PREFIX, v, "GUILD")
+    end
+    if IsInRaid and IsInRaid() then
+        PCP_SendAddonMessage(PCP_UPDATE_PREFIX, v, "RAID")
+    elseif IsInGroup and IsInGroup() then
+        PCP_SendAddonMessage(PCP_UPDATE_PREFIX, v, "PARTY")
+    end
+end
+
+local function PCP_SetSolid(tex, r, g, b, a)
+    if not tex then return end
+    if tex.SetColorTexture then
+        tex:SetColorTexture(r, g, b, a)
+    else
+        tex:SetTexture(r, g, b, a)
+    end
+end
+
+local pcpLastFlashButton = nil
+
+local function PCP_FlashButton(btn)
+    if not btn then return end
+
+    if pcpLastFlashButton and pcpLastFlashButton ~= btn then
+        local old = pcpLastFlashButton
+        if old._pcpFlashTex then
+            old._pcpFlashTex:Hide()
+        end
+    end
+    pcpLastFlashButton = btn
+
+    if not btn._pcpFlashTex then
+        local t = btn:CreateTexture(nil, "OVERLAY")
+        t:SetAllPoints()
+        t:SetTexture("Interface\\Buttons\\WHITE8x8")
+        t:SetVertexColor(0.20, 0.60, 1.00, 0.18)
+        t:Hide()
+        btn._pcpFlashTex = t
+        btn._pcpFlashToken = 0
+    end
+
+    btn._pcpFlashToken = (btn._pcpFlashToken or 0) + 1
+    local token = btn._pcpFlashToken
+
+    btn._pcpFlashTex:Show()
+
+    if C_Timer and C_Timer.After then
+        C_Timer.After(1, function()
+            if not btn or not btn._pcpFlashTex then return end
+            if btn._pcpFlashToken ~= token then return end
+            btn._pcpFlashTex:Hide()
+        end)
+    else
+        local f = btn._pcpFlashFrame
+        if not f then
+            f = CreateFrame("Frame", nil, btn)
+            btn._pcpFlashFrame = f
+        end
+        local elapsedAcc = 0
+        f:SetScript("OnUpdate", function(_, elapsed)
+            elapsedAcc = elapsedAcc + (elapsed or 0)
+            if elapsedAcc >= 1 then
+                f:SetScript("OnUpdate", nil)
+                if btn._pcpFlashToken == token and btn._pcpFlashTex then
+                    btn._pcpFlashTex:Hide()
+                end
+            end
+        end)
+    end
+end
+
+local function PCP_SkinButton(btn)
+    if not btn or btn._pcpSkinned then return end
+    if btn.GetObjectType and btn:GetObjectType() ~= "Button" then return end
+
+    local hasText = false
+    if btn.GetFontString and btn:GetFontString() then
+        hasText = true
+    elseif btn.GetText then
+        local t = btn:GetText()
+        if type(t) == "string" and t ~= "" then
+            hasText = true
+        end
+    end
+    if not hasText then return end
+
+    btn._pcpSkinned = true
+
+    if btn.SetNormalTexture then
+        btn:SetNormalTexture("Interface\\Buttons\\WHITE8x8")
+        local t = btn:GetNormalTexture()
+        if t then
+            t:SetAllPoints()
+            t:SetVertexColor(0.11, 0.12, 0.15, 0.95)
+        end
+    end
+
+    if btn.SetPushedTexture then
+        btn:SetPushedTexture("Interface\\Buttons\\WHITE8x8")
+        local t = btn:GetPushedTexture()
+        if t then
+            t:SetAllPoints()
+            t:SetVertexColor(0.09, 0.10, 0.12, 0.98)
+        end
+    end
+
+    if btn.SetHighlightTexture then
+        btn:SetHighlightTexture("Interface\\Buttons\\WHITE8x8")
+        local t = btn:GetHighlightTexture()
+        if t then
+            t:SetAllPoints()
+            t:SetVertexColor(1, 1, 1, 0.06)
+        end
+    end
+
+    if btn.SetDisabledTexture then
+        btn:SetDisabledTexture("Interface\\Buttons\\WHITE8x8")
+        local t = btn:GetDisabledTexture()
+        if t then
+            t:SetAllPoints()
+            t:SetVertexColor(0.07, 0.08, 0.10, 0.70)
+        end
+    end
+
+    local top = btn:CreateTexture(nil, "BORDER")
+    top:SetPoint("TOPLEFT", 0, 0)
+    top:SetPoint("TOPRIGHT", 0, 0)
+    top:SetHeight(1)
+    PCP_SetSolid(top, 1, 1, 1, 0.08)
+
+    local bottom = btn:CreateTexture(nil, "BORDER")
+    bottom:SetPoint("BOTTOMLEFT", 0, 0)
+    bottom:SetPoint("BOTTOMRIGHT", 0, 0)
+    bottom:SetHeight(1)
+    PCP_SetSolid(bottom, 1, 1, 1, 0.08)
+
+    local left = btn:CreateTexture(nil, "BORDER")
+    left:SetPoint("TOPLEFT", 0, 0)
+    left:SetPoint("BOTTOMLEFT", 0, 0)
+    left:SetWidth(1)
+    PCP_SetSolid(left, 1, 1, 1, 0.08)
+
+    local right = btn:CreateTexture(nil, "BORDER")
+    right:SetPoint("TOPRIGHT", 0, 0)
+    right:SetPoint("BOTTOMRIGHT", 0, 0)
+    right:SetWidth(1)
+    PCP_SetSolid(right, 1, 1, 1, 0.08)
+end
+
+local function PCP_SkinAllButtons(frame)
+    if not frame or not frame.GetChildren then return end
+    local function walk(parent)
+        for _, child in ipairs({ parent:GetChildren() }) do
+            if child and child.GetObjectType and child:GetObjectType() == "Button" then
+                PCP_SkinButton(child)
+                if child._pcpSkinned and not child._pcpFlashWrapped then
+                    child._pcpFlashWrapped = true
+                    local orig = child:GetScript("OnClick")
+                    child:SetScript("OnClick", function(self, ...)
+                        if type(orig) == "function" then
+                            orig(self, ...)
+                        end
+                        PCP_FlashButton(self)
+                    end)
+                end
+            end
+            if child and child.GetChildren then
+                walk(child)
+            end
+        end
+    end
+    walk(frame)
+end
+
+local function PCP_SkinFrame(frame)
+    if not frame or frame._pcpFrameSkinned then return end
+    frame._pcpFrameSkinned = true
+
+    if frame.SetFrameStrata then
+        frame:SetFrameStrata("HIGH")
+    end
+    if frame.SetClampedToScreen then
+        frame:SetClampedToScreen(true)
+    end
+
+    if frame.SetBackdrop then
+        frame:SetBackdrop({
+            bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+            edgeFile = "Interface\\Buttons\\WHITE8x8",
+            tile = true,
+            tileSize = 16,
+            edgeSize = 1,
+            insets = { left = 1, right = 1, top = 1, bottom = 1 },
+        })
+        if frame.SetBackdropColor then
+            frame:SetBackdropColor(0.06, 0.07, 0.08, 0.94)
+        end
+        if frame.SetBackdropBorderColor then
+            frame:SetBackdropBorderColor(0, 0, 0, 0.95)
+        end
+    end
+
+    local bar = frame:CreateTexture(nil, "BACKGROUND")
+    bar:SetPoint("TOPLEFT", frame, "TOPLEFT", 1, -1)
+    bar:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -1, -1)
+    bar:SetHeight(28)
+    PCP_SetSolid(bar, 0.10, 0.12, 0.16, 0.95)
+    frame._pcpHeaderBar = bar
+
+    local divider = frame:CreateTexture(nil, "BORDER")
+    divider:SetPoint("TOPLEFT", bar, "BOTTOMLEFT", 0, 0)
+    divider:SetPoint("TOPRIGHT", bar, "BOTTOMRIGHT", 0, 0)
+    divider:SetHeight(1)
+    PCP_SetSolid(divider, 1, 1, 1, 0.06)
+    frame._pcpHeaderDivider = divider
+end
+
+local function PCP_CreateMinimapButton()
+    if PCPButtonFrame then return end
+    if not Minimap then return end
+
     local parentFrame = Minimap
     local width, height = 32, 32
 
@@ -16,16 +289,24 @@ if not PCPButtonFrame then
     end
 
     PCPButtonFrame:SetWidth(width, height)
-    PCPButtonFrame:SetHeight(height)	
+    PCPButtonFrame:SetHeight(height)
     PCPButtonFrame:SetPoint("TOP", parentFrame, "TOP", 0, 0)
     PCPButtonFrame:EnableMouse(true)
     PCPButtonFrame:SetMovable(true)
     PCPButtonFrame:SetUserPlaced(true)
     PCPButtonFrame:RegisterForDrag("RightButton")
-    PCPButtonFrame:SetFrameStrata("LOW")
+    PCPButtonFrame:SetFrameStrata("MEDIUM")
 
-   
-    if isVanilla then
+    if not isVanilla and PCPButtonFrame.SetBackdrop then
+        PCPButtonFrame:SetBackdrop({
+            bgFile = "Interface\\Buttons\\WHITE8x8",
+            edgeFile = "Interface\\Buttons\\WHITE8x8",
+            edgeSize = 1,
+            insets = { left = 1, right = 1, top = 1, bottom = 1 },
+        })
+        PCPButtonFrame:SetBackdropColor(0.06, 0.07, 0.08, 0.92)
+        PCPButtonFrame:SetBackdropBorderColor(1, 1, 1, 0.08)
+    elseif isVanilla then
         PCPButtonFrame:SetBackdrop({
             bgFile = "Interface/Tooltips/UI-Tooltip-Background",
             edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
@@ -35,85 +316,70 @@ if not PCPButtonFrame then
         PCPButtonFrame:SetBackdropColor(0, 0, 0, 0.5)
     end
 
-   
     PCPButtonFrame:SetNormalTexture("Interface\\AddOns\\PCP\\img\\SoloCraft.tga")
     PCPButtonFrame:SetPushedTexture("Interface\\AddOns\\PCP\\img\\SoloCraft.tga")
     PCPButtonFrame:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight", "ADD")
-
-   
-   
-   
-    -- Saves the minimap button position while dragging it.
-    local function SaveButtonPosition()
-        local point, relativeTo, relativePoint, xOffset, yOffset = PCPButtonFrame:GetPoint()
-        PCPButtonFrame.position = {point, relativeTo, relativePoint, xOffset, yOffset}
+    local n = PCPButtonFrame.GetNormalTexture and PCPButtonFrame:GetNormalTexture()
+    if n and n.SetTexCoord then
+        n:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    end
+    local p = PCPButtonFrame.GetPushedTexture and PCPButtonFrame:GetPushedTexture()
+    if p and p.SetTexCoord then
+        p:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     end
 
-    -- Restores the minimap button position (if it was saved earlier).
-    local function RestoreButtonPosition()
-        if PCPButtonFrame.position then
-            local point, relativeTo, relativePoint, xOffset, yOffset = unpack(PCPButtonFrame.position)
-            PCPButtonFrame:ClearAllPoints()
-            PCPButtonFrame:SetPoint(point, relativeTo, relativePoint, xOffset, yOffset)
+    local function dragStart(self)
+        if PCPButtonFrame_BeingDragged then
+            self:SetScript("OnUpdate", PCPButtonFrame_BeingDragged)
         end
     end
 
-   
-   
-   
-    local dragStart, dragStop, onClick, onEnter, onLeave
-
-    if isVanilla then
-        dragStart = function() this:StartMoving() end
-        dragStop  = function() this:StopMovingOrSizing(); SaveButtonPosition() end
-        onClick   = function() PCPButtonFrame_Toggle() end
-        onEnter   = function()
-                        GameTooltip:SetOwner(this, "ANCHOR_RIGHT")
-                        GameTooltip:SetText("PartyBot Control Panel\nLeft Click: Toggle\nRight Click: Move", 1,1,1)
-                        GameTooltip:Show()
-                    end
-    else
-        dragStart = function(self) self:StartMoving() end
-        dragStop  = function(self) self:StopMovingOrSizing(); SaveButtonPosition() end
-        onClick   = function(self) PCPButtonFrame_Toggle() end
-        onEnter   = function(self)
-                        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                        GameTooltip:SetText("PartyBot Control Panel\nLeft Click: Toggle\nRight Click: Move", 1,1,1)
-                        GameTooltip:Show()
-                    end
+    local function dragStop(self)
+        self:SetScript("OnUpdate", nil)
+        if PCPButtonFrame_UpdatePosition then
+            PCPButtonFrame_UpdatePosition()
+        end
     end
 
-    onLeave = function() GameTooltip:Hide() end
+    local function onClick(self)
+        if PCPButtonFrame_OnClick then
+            PCPButtonFrame_OnClick()
+        elseif PCPButtonFrame_Toggle then
+            PCPButtonFrame_Toggle()
+        end
+    end
+
+    local function onEnter(self)
+        if PCPButtonFrame_OnEnter then
+            PCPButtonFrame_OnEnter(self)
+        else
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText("PartyBot Control Panel\nLeft Click: Toggle\nRight Click: Move", 1,1,1)
+            GameTooltip:Show()
+        end
+    end
+
+    local function onLeave()
+        GameTooltip:Hide()
+    end
 
     PCPButtonFrame:SetScript("OnDragStart", dragStart)
     PCPButtonFrame:SetScript("OnDragStop", dragStop)
     PCPButtonFrame:SetScript("OnClick", onClick)
     PCPButtonFrame:SetScript("OnEnter", onEnter)
     PCPButtonFrame:SetScript("OnLeave", onLeave)
-
-    RestoreButtonPosition()
     PCPButtonFrame:Show()
 end
 
-local PCPFrameShown = false
-
-function PCPButtonFrame_Toggle()
-    -- Toggles the main PCP window.
-    if PCPFrameShown then
-        PCPFrame:Hide()
-    else
-        PCPFrame:Show()
-    end
-    PCPFrameShown = not PCPFrameShown
-end
-
 local function PCP_InitSettings()
-    -- Initializes saved variables and default “section enabled” state for the collapsible layout.
     if type(PCPSettings) ~= "table" then
         PCPSettings = {}
     end
     if type(PCPSettings.sectionEnabled) ~= "table" then
         PCPSettings.sectionEnabled = {}
+    end
+    if type(PCPSettings.ui) ~= "table" then
+        PCPSettings.ui = {}
     end
 
     local defaults = {
@@ -131,14 +397,71 @@ local function PCP_InitSettings()
             PCPSettings.sectionEnabled[key] = value
         end
     end
+
+    if type(PCPSettings.ui.activeTab) ~= "string" then
+        PCPSettings.ui.activeTab = "Bots"
+    end
+    if type(PCPSettings.ui.scale) ~= "number" then
+        PCPSettings.ui.scale = 1
+    end
+    if type(PCPSettings.ui.bigFont) ~= "boolean" then
+        PCPSettings.ui.bigFont = false
+    end
+end
+
+local function PCP_ClampScale(v)
+    v = tonumber(v) or 1
+    if v < 0.8 then v = 0.8 end
+    if v > 1.3 then v = 1.3 end
+    return v
+end
+
+local function PCP_ApplyScale(frame)
+    if not frame or not frame.SetScale then return end
+    if type(PCPSettings) ~= "table" or type(PCPSettings.ui) ~= "table" then return end
+    frame:SetScale(PCP_ClampScale(PCPSettings.ui.scale))
+end
+
+local function PCP_EnsureOriginalFonts(frame)
+    if not frame or frame._pcpOriginalFonts then return end
+    frame._pcpOriginalFonts = {}
+
+    for _, region in ipairs({ frame:GetRegions() }) do
+        if region and region.GetObjectType and region:GetObjectType() == "FontString" then
+            local font, size, flags = region:GetFont()
+            frame._pcpOriginalFonts[region] = { font = font, size = size, flags = flags }
+        end
+    end
+
+    for _, child in ipairs({ frame:GetChildren() }) do
+        if child and child.GetObjectType and child:GetObjectType() == "Button" and child.GetFontString then
+            local fs = child:GetFontString()
+            if fs and not frame._pcpOriginalFonts[fs] then
+                local font, size, flags = fs:GetFont()
+                frame._pcpOriginalFonts[fs] = { font = font, size = size, flags = flags }
+            end
+        end
+    end
+end
+
+local function PCP_ApplyFontMode(frame)
+    if not frame then return end
+    if type(PCPSettings) ~= "table" or type(PCPSettings.ui) ~= "table" then return end
+    PCP_EnsureOriginalFonts(frame)
+
+    local big = PCPSettings.ui.bigFont and true or false
+    local mul = big and 1.15 or 1
+
+    for fs, orig in pairs(frame._pcpOriginalFonts or {}) do
+        if fs and fs.SetFont and orig and type(orig.size) == "number" then
+            fs:SetFont(orig.font, math.floor((orig.size * mul) + 0.5), orig.flags)
+        end
+    end
 end
 
 local PCP_AlignExternalButtons
 
 local function PCP_TryHookFillRaidBots(frame)
-    -- FillRaidBots repositions its buttons (FILL RAID / KICK ALL / REFILL) continuously and can
-    -- override any anchoring we do from PCP. To make PCP “win”, we hook FillRaidBots’
-    -- RepositionButtonsFromOffset() and apply our alignment after it runs.
     if _G.PCP_FRBHooked then return end
     if type(_G.RepositionButtonsFromOffset) ~= "function" then return end
 
@@ -159,11 +482,6 @@ local function PCP_TryHookFillRaidBots(frame)
 end
 
 PCP_AlignExternalButtons = function(frame)
-    -- Keeps external addon buttons aligned to the PCP frame when PCP changes height
-    -- (collapsing/expanding sections).
-    --
-    -- This targets FillRaidBots specifically by looking for the global button names it creates.
-    -- If the user enables FillRaidBots “move buttons” modes, we don’t interfere.
     if not frame or not frame.IsShown or not frame:IsShown() then return end
 
     PCP_TryHookFillRaidBots(frame)
@@ -193,8 +511,6 @@ PCP_AlignExternalButtons = function(frame)
         end
     end
 
-    -- Anchor frame used as a stable reference point on the left edge of PCP.
-    -- Other addons can also use PCPExternalLeftAnchor/PCPExternalRightAnchor if they want.
     local anchor = _G.PCPExternalLeftAnchor or frame
     local gap = 8
 
@@ -250,20 +566,55 @@ local function OnPlayerLogin(self, event)
         print("Classic client loaded: " .. version)
     end
 
-    PCPButtonFrame:Show()
+    PCP_CreateMinimapButton()
+    if PCPButtonFrame then
+        PCPButtonFrame:Show()
+        if PCPButtonFrame_UpdatePosition then
+            PCPButtonFrame_UpdatePosition()
+        end
+    end
+
+    PCP_RegisterAddonPrefix()
+    PCP_BroadcastVersion()
 end
 
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
-eventFrame:SetScript("OnEvent", OnPlayerLogin)
+eventFrame:RegisterEvent("CHAT_MSG_ADDON")
+eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
+eventFrame:RegisterEvent("GUILD_ROSTER_UPDATE")
+eventFrame:SetScript("OnEvent", function(self, event, ...)
+    if event == "PLAYER_LOGIN" then
+        OnPlayerLogin(self, event, ...)
+        return
+    end
+
+    if event == "GROUP_ROSTER_UPDATE" or event == "GUILD_ROSTER_UPDATE" then
+        PCP_BroadcastVersion()
+        return
+    end
+
+    if event == "CHAT_MSG_ADDON" then
+        local prefix, message, channel, sender = ...
+        if prefix ~= PCP_UPDATE_PREFIX then return end
+
+        local localV = PCP_GetAddonVersion()
+        local remoteV = message
+        if type(remoteV) ~= "string" or remoteV == "" then return end
+
+        if PCP_IsNewerVersion(remoteV, localV) then
+            PCP_InitSettings()
+            PCPSettings.ui = PCPSettings.ui or {}
+            if PCPSettings.ui.updateNotifiedVersion ~= remoteV then
+                PCPSettings.ui.updateNotifiedVersion = remoteV
+                print("|cffffd100PCP|r: Newer version detected from " .. (sender or "unknown") .. ": " .. remoteV .. " (you have " .. localV .. ")")
+                print("|cffffd100PCP|r: Releases: " .. PCP_RELEASES_URL)
+            end
+        end
+    end
+end)
 
 local function PCP_InitCollapsible(frame)
-    -- Builds a “collapsible sections” layout around the original XML UI.
-    -- It works by:
-    -- 1) Finding header FontStrings (section titles).
-    -- 2) Grouping other UI objects under the nearest header based on their original TOP-anchored Y offsets.
-    -- 3) Re-parenting those objects into per-section container frames.
-    -- 4) Recomputing the PCPFrame height when sections are hidden/shown.
     if frame._pcpLayout then return end
 
     local headerTextSet = {
@@ -404,7 +755,6 @@ local function PCP_InitCollapsible(frame)
         end
     end
 
-    -- Footer container: keeps Close + version label grouped and positioned consistently.
     local footer = CreateFrame("Frame", nil, frame)
     if closeButton then
         closeButton:SetParent(footer)
@@ -412,15 +762,12 @@ local function PCP_InitCollapsible(frame)
         closeButton:SetPoint("TOP", footer, "TOP", 0, -8)
     end
     if versionLabel then
-        -- Puts the version label centered under the Close button (instead of overlapping it).
         versionLabel:SetParent(footer)
         versionLabel:ClearAllPoints()
         versionLabel:SetPoint("BOTTOM", footer, "BOTTOM", 0, 6)
     end
 
     if not _G.PCPExternalLeftAnchor then
-        -- Small helper anchors at the left/right edge of PCPFrame.
-        -- External addons can anchor to these instead of doing GetLeft()/GetTop() math.
         local a = CreateFrame("Frame", "PCPExternalLeftAnchor", frame)
         a:SetSize(1, 1)
         a:Hide()
@@ -456,9 +803,7 @@ local function PCP_InitCollapsible(frame)
     layout.MeasureSectionHeight = MeasureSectionHeight
 
     function layout:Relayout()
-        -- Lays out all enabled sections from top to bottom, then places the footer.
-        -- Finally, it updates PCPFrame height to fit the visible content.
-        local y = 6
+        local y = frame._pcpTopOffset or 6
         for _, sec in ipairs(self.sections) do
             if sec.enabled then
                 sec.container:Show()
@@ -482,7 +827,6 @@ local function PCP_InitCollapsible(frame)
         frame:SetHeight(math.max(200, y))
 
         if _G.PCPExternalLeftAnchor then
-            -- Keep helper anchors glued to the current PCPFrame edges.
             _G.PCPExternalLeftAnchor:ClearAllPoints()
             _G.PCPExternalLeftAnchor:SetPoint("LEFT", frame, "LEFT", 0, 0)
             _G.PCPExternalLeftAnchor:Show()
@@ -493,7 +837,6 @@ local function PCP_InitCollapsible(frame)
             _G.PCPExternalRightAnchor:Show()
         end
 
-        -- Re-align external addon buttons after any size/layout change.
         PCP_AlignExternalButtons(frame)
     end
 
@@ -520,6 +863,145 @@ local function PCP_InitCollapsible(frame)
             end
         end
 
+        local function EnsureUiPopup()
+            if frame._pcpUiPopup then return end
+
+            local popup = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+            popup:SetPoint("TOPRIGHT", optionsButton, "BOTTOMRIGHT", 0, -6)
+            popup:SetSize(240, 120)
+            popup:SetFrameStrata("DIALOG")
+            popup:SetFrameLevel(200)
+            if popup.SetClampedToScreen then
+                popup:SetClampedToScreen(true)
+            end
+            popup:SetBackdrop({
+                bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+                edgeFile = "Interface\\Buttons\\WHITE8x8",
+                tile = true,
+                tileSize = 16,
+                edgeSize = 1,
+                insets = { left = 1, right = 1, top = 1, bottom = 1 },
+            })
+            popup:SetBackdropColor(0.06, 0.07, 0.08, 0.96)
+            popup:SetBackdropBorderColor(0, 0, 0, 0.95)
+            popup:Hide()
+            popup:EnableMouse(true)
+
+            local function IsHovering()
+                if popup.IsMouseOver and popup:IsMouseOver() then
+                    return true
+                end
+                if optionsButton and optionsButton.IsMouseOver and optionsButton:IsMouseOver() then
+                    return true
+                end
+                if MouseIsOver then
+                    if MouseIsOver(popup) then return true end
+                    if optionsButton and MouseIsOver(optionsButton) then return true end
+                end
+                return false
+            end
+
+            local function HoldOpen()
+                popup._pcpAutoHideAcc = 0
+                if GetTime then
+                    popup._pcpHoldOpenUntil = GetTime() + 1.0
+                else
+                    popup._pcpHoldOpenUntil = nil
+                end
+            end
+
+            popup._pcpAutoHideAcc = 0
+            popup:SetScript("OnShow", function(self)
+                self._pcpAutoHideAcc = 0
+                self._pcpHoldOpenUntil = nil
+            end)
+            popup:SetScript("OnUpdate", function(self, elapsed)
+                if not self:IsShown() then return end
+                if IsHovering() then
+                    self._pcpAutoHideAcc = 0
+                    return
+                end
+                if self._pcpHoldOpenUntil and GetTime and GetTime() < self._pcpHoldOpenUntil then
+                    self._pcpAutoHideAcc = 0
+                    return
+                end
+                self._pcpAutoHideAcc = (self._pcpAutoHideAcc or 0) + (elapsed or 0)
+                if self._pcpAutoHideAcc >= 1.5 then
+                    self:Hide()
+                end
+            end)
+
+            local title = popup:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            title:SetPoint("TOPLEFT", popup, "TOPLEFT", 10, -10)
+            title:SetText("UI Settings")
+
+            local slider = CreateFrame("Slider", "PCPUIScaleSlider", popup, "OptionsSliderTemplate")
+            slider:SetPoint("TOPLEFT", popup, "TOPLEFT", 10, -34)
+            slider:SetPoint("TOPRIGHT", popup, "TOPRIGHT", -10, -34)
+            slider:SetMinMaxValues(0.8, 1.3)
+            slider:SetValueStep(0.05)
+            slider:SetObeyStepOnDrag(true)
+
+            local label = _G[slider:GetName() .. "Text"]
+            local low = _G[slider:GetName() .. "Low"]
+            local high = _G[slider:GetName() .. "High"]
+            if label then label:SetText("UI Scale") end
+            if low then low:SetText("0.8") end
+            if high then high:SetText("1.3") end
+
+            slider:SetScript("OnValueChanged", function(_, value)
+                HoldOpen()
+                if type(PCPSettings) == "table" and type(PCPSettings.ui) == "table" then
+                    PCPSettings.ui.scale = PCP_ClampScale(value)
+                end
+                PCP_ApplyScale(frame)
+            end)
+
+            local cb = CreateFrame("CheckButton", nil, popup, "UICheckButtonTemplate")
+            cb:SetPoint("TOPLEFT", popup, "TOPLEFT", 10, -76)
+            cb:SetChecked(type(PCPSettings) == "table" and type(PCPSettings.ui) == "table" and PCPSettings.ui.bigFont and true or false)
+            local txt = cb:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+            txt:SetPoint("LEFT", cb, "RIGHT", 4, 1)
+            txt:SetText("Big Font")
+            cb:SetScript("OnClick", function(self)
+                HoldOpen()
+                if type(PCPSettings) == "table" and type(PCPSettings.ui) == "table" then
+                    PCPSettings.ui.bigFont = self:GetChecked() and true or false
+                end
+                PCP_ApplyFontMode(frame)
+                if frame._pcpLayout then
+                    frame._pcpLayout:Relayout()
+                end
+            end)
+
+            frame._pcpUiPopup = popup
+            frame._pcpUiScaleSlider = slider
+            frame._pcpUiBigFont = cb
+        end
+
+        local function ToggleUiPopup()
+            EnsureUiPopup()
+            local p = frame._pcpUiPopup
+            if not p then return end
+            if p:IsShown() then
+                p:Hide()
+            else
+                if frame._pcpUiScaleSlider then
+                    frame._pcpUiScaleSlider:SetValue(PCP_ClampScale(type(PCPSettings) == "table" and type(PCPSettings.ui) == "table" and PCPSettings.ui.scale or 1))
+                end
+                if frame._pcpUiBigFont then
+                    frame._pcpUiBigFont:SetChecked(type(PCPSettings) == "table" and type(PCPSettings.ui) == "table" and PCPSettings.ui.bigFont and true or false)
+                end
+                p:Show()
+                p._pcpAutoHideAcc = 0
+                if GetTime then
+                    p._pcpHoldOpenUntil = GetTime() + 1.0
+                else
+                    p._pcpHoldOpenUntil = nil
+                end
+            end
+        end
+
         local function ShowMenu()
             local menu = {
                 { text = "Sections", isTitle = true, notCheckable = true },
@@ -538,6 +1020,8 @@ local function PCP_InitCollapsible(frame)
                 }
             end
 
+            menu[#menu + 1] = { text = "", notCheckable = true, disabled = true }
+            menu[#menu + 1] = { text = "UI Settings...", notCheckable = true, func = ToggleUiPopup }
             menu[#menu + 1] = { text = "", notCheckable = true, disabled = true }
             menu[#menu + 1] = {
                 text = "Show All",
@@ -567,11 +1051,15 @@ local function PCP_InitCollapsible(frame)
                 EasyMenu(menu, frame._pcpOptionsMenuFrame, "cursor", 0, 0, "MENU", 2)
             else
                 if not frame._pcpOptionsPopup then
-                    local popup = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+                    local popup = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
                     popup:SetPoint("TOPRIGHT", optionsButton, "BOTTOMRIGHT", 0, -6)
                     local popupHeight = (#frame._pcpLayout.sections * 24) + 24
                     popup:SetSize(200, popupHeight)
-                    popup:SetFrameLevel(frame:GetFrameLevel() + 200)
+                    popup:SetFrameStrata("DIALOG")
+                    popup:SetFrameLevel(180)
+                    if popup.SetClampedToScreen then
+                        popup:SetClampedToScreen(true)
+                    end
                     popup:SetBackdrop({
                         bgFile = "Interface/Tooltips/UI-Tooltip-Background",
                         edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
@@ -626,8 +1114,6 @@ local function PCP_InitCollapsible(frame)
     frame._pcpLayout:Relayout()
 
     if not frame._pcpExternalAligner then
-        -- Safety net: some addons (like FillRaidBots) keep re-positioning their buttons.
-        -- This periodically re-applies our alignment so the buttons stay centered.
         local aligner = CreateFrame("Frame", nil, frame)
         local elapsedAcc = 0
         aligner:SetScript("OnUpdate", function(_, elapsed)
@@ -643,6 +1129,93 @@ end
 
 local function PCPFrame_OnShow(frame)
     PCP_InitCollapsible(frame)
+    PCP_SkinFrame(frame)
+    PCP_SkinAllButtons(frame)
+    PCP_ApplyScale(frame)
+    PCP_ApplyFontMode(frame)
+    if frame._pcpLayout then
+        if not frame._pcpTabs then
+            frame._pcpTabs = {}
+
+            local tabs = { "Bots", "Commands", "Marks", "All" }
+            local tabLabels = {
+                Bots = "Bots",
+                Commands = "Cmds",
+                Marks = "Marks",
+                All = "All",
+            }
+            for i, key in ipairs(tabs) do
+                local b = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+                b:SetSize(52, 20)
+                if i == 1 then
+                    b:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -32)
+                else
+                    b:SetPoint("LEFT", frame._pcpTabs[i - 1], "RIGHT", 6, 0)
+                end
+                b:SetText(tabLabels[key] or key)
+                b._pcpTabKey = key
+                PCP_SkinButton(b)
+                frame._pcpTabs[i] = b
+            end
+
+            frame._pcpTopOffset = 58
+        end
+
+        local function ApplyTab(tabKey)
+            if type(PCPSettings) == "table" and type(PCPSettings.ui) == "table" then
+                PCPSettings.ui.activeTab = tabKey
+            end
+
+            local showAll = tabKey == "All"
+            local showBots = tabKey == "Bots"
+            local showCommands = tabKey == "Commands"
+            local showMarks = tabKey == "Marks"
+
+            for _, sec in ipairs(frame._pcpLayout.sections) do
+                local enabled = false
+                local savedEnabled = true
+                if type(PCPSettings) == "table" and type(PCPSettings.sectionEnabled) == "table" then
+                    savedEnabled = PCPSettings.sectionEnabled[sec.baseText] ~= false
+                end
+
+                if showAll then
+                    enabled = savedEnabled
+                elseif showBots then
+                    enabled = (sec.baseText == "PartyBot Configurator" or sec.baseText == "Add PartyBot by role") and savedEnabled
+                elseif showCommands then
+                    enabled = (sec.baseText == "Commands" or sec.baseText == "Come" or sec.baseText == "Move" or sec.baseText == "Stay") and savedEnabled
+                elseif showMarks then
+                    enabled = (sec.baseText == "Mark Configurator") and savedEnabled
+                end
+
+                sec.enabled = enabled
+            end
+
+            for _, b in ipairs(frame._pcpTabs) do
+                local n = b and b.GetNormalTexture and b:GetNormalTexture()
+                if n and n.SetVertexColor then
+                    if b._pcpTabKey == tabKey then
+                        n:SetVertexColor(0.15, 0.17, 0.22, 0.98)
+                    else
+                        n:SetVertexColor(0.11, 0.12, 0.15, 0.95)
+                    end
+                end
+            end
+
+            frame._pcpLayout:Relayout()
+            PCP_AlignExternalButtons(frame)
+        end
+
+        if not frame._pcpTabHandlers then
+            frame._pcpTabHandlers = true
+            for _, b in ipairs(frame._pcpTabs) do
+                b:SetScript("OnClick", function() ApplyTab(b._pcpTabKey) end)
+            end
+        end
+
+        local savedTab = (type(PCPSettings) == "table" and type(PCPSettings.ui) == "table" and PCPSettings.ui.activeTab) or "Bots"
+        ApplyTab(savedTab)
+    end
     if frame._pcpLayout then
         frame._pcpLayout:Relayout()
     end
@@ -656,40 +1229,8 @@ function PCPFrame_OnLoad(frame)
     f:EnableMouse(true)
     f:RegisterForDrag("LeftButton")
 
-    if not isVanilla and not f._pcpBackdropApplied then
-        local backdropConfig = {
-            bgFile = "Interface/Tooltips/UI-Tooltip-Background",
-            edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
-            tile = true,
-            tileSize = 32,
-            edgeSize = 16,
-            insets = { left = 4, right = 4, top = 4, bottom = 4 },
-        }
-
-        local function ApplyBackdrop(target)
-            if not target or type(target.SetBackdrop) ~= "function" then return false end
-            target:SetBackdrop(backdropConfig)
-            if type(target.SetBackdropColor) == "function" then
-                target:SetBackdropColor(0, 0, 0, 0.4)
-            end
-            if type(target.SetBackdropBorderColor) == "function" then
-                target:SetBackdropBorderColor(1, 1, 1, 1)
-            end
-            return true
-        end
-
-        if not ApplyBackdrop(f) then
-            local backdropFrame = CreateFrame("Frame", nil, f, "BackdropTemplate")
-            backdropFrame:SetAllPoints(f)
-            backdropFrame:SetFrameStrata(f:GetFrameStrata())
-            local level = f:GetFrameLevel()
-            backdropFrame:SetFrameLevel(level > 0 and (level - 1) or 0)
-            ApplyBackdrop(backdropFrame)
-            f._pcpBackdropFrame = backdropFrame
-        end
-
-        f._pcpBackdropApplied = true
-    end
+    PCP_SkinFrame(f)
+    PCP_SkinAllButtons(f)
 
     f:SetScript("OnDragStart", function()
         if isVanilla then
@@ -721,8 +1262,6 @@ end
 
 SLASH_MOVEFRAME1 = "/movepcp"
 SlashCmdList["MOVEFRAME"] = function()
-    -- Slash command: move PCPFrame to your cursor position.
-    -- Usage: /movepcp (then your mouse position becomes the new frame center)
     if not PCPFrame then return end 
 
    
@@ -741,7 +1280,6 @@ end
 BINDING_HEADER_CCP = "PartyBot Control Panel";
 BINDING_NAME_CP = "Show/Hide PCP";
 
--- Chat command strings sent to the server (SoloCraft/PartyBot server commands).
 CMD_PARTYBOT_CLONE = ".partybot clone";
 CMD_PARTYBOT_REMOVE = ".partybot remove";
 CMD_PARTYBOT_ADD = ".partybot add ";
@@ -753,11 +1291,9 @@ CMD_TOGGLE_HELM = ".partybot togglehelm ";
 CMD_TOGGLE_CLOAK = ".partybot togglecloak ";
 CMD_GENERAL = ".partybot ";
 
--- UI state: current “selected” command/mark/toggle shown in the stacks.
 AddCmd = ""
 CmdItr = 1
 function CmdStackHide()
-	-- Hides all “command type” labels (All/Tank/Healer/...).
 	CmdAll:Hide()
 	CmdTank:Hide()
 	CmdHealer:Hide()
@@ -776,7 +1312,6 @@ function CmdStackHide()
 end
 
 function CmdADD()
-	-- Cycles command type forward and updates the visible label.
 	Cmds = { "", "tank", "healer", "dps", "mdps", "rdps", "warrior", "paladin", "hunter", "rogue", "priest", "shaman", "mage", "warlock", "druid" }
 
 	CmdItr = CmdItr + 1	
@@ -801,7 +1336,6 @@ function CmdADD()
 end
 
 function CmdSUB()
-	-- Cycles command type backward and updates the visible label.
 	Cmds = { "", "tank", "healer", "dps", "mdps", "rdps", "warrior", "paladin", "hunter", "rogue", "priest", "shaman", "mage", "warlock", "druid" }
 
 	CmdItr = CmdItr - 1	
@@ -826,30 +1360,25 @@ function CmdSUB()
 end
 
 function SetCommand(arg)
-	-- Sends: .partybot <role/class/etc>
 		SendChatMessage(CMD_GENERAL .. arg);
 end
 
 function SetPause()
-	-- Sends: .partybot pause
 		SendChatMessage(CMD_GENERAL .. " pause ");
 end
 
 function SetUnpause()
-	-- Sends: .partybot unpause
 		SendChatMessage(CMD_GENERAL .. " unpause ");
 end
 
 AddMark = "ccmark"
 MarkItr = 1
 function MarkStackHide()
-	-- Hides all mark mode labels (ccmark/focusmark).
 	ccmark:Hide()
 	focusmark:Hide()
 end
 
 function MarkADD()
-	-- Cycles mark mode forward and updates the visible label.
 	Marks = { "ccmark", "focusmark" }
 
 	MarkItr = MarkItr + 1	
@@ -861,7 +1390,6 @@ function MarkADD()
 end
 
 function MarkSUB()
-	-- Cycles mark mode backward and updates the visible label.
 	Marks = { "ccmark", "focusmark" }
 
 	MarkItr = MarkItr - 1	
@@ -873,29 +1401,24 @@ function MarkSUB()
 end
 
 function SetMark(self, arg)
-	-- Sends: .partybot <markType> <markArg>
 	SendChatMessage(CMD_GENERAL .. AddMark .. " " .. arg);
 end
 
 function ShowMark()
-	-- Sends: .partybot <markType>
 	SendChatMessage(CMD_GENERAL .. AddMark);
 end
 
 function ClearMark()
-	-- Sends: .partybot clear <markType>
 	SendChatMessage(CMD_GENERAL .. "clear " .. AddMark);
 end
 
 function ClearAllMark()
-	-- Sends: .partybot clear
 	SendChatMessage(CMD_GENERAL .. "clear");
 end
 
 AddToggle = "aoe"
 ToggleItr = 1
 function ToggleStackHide()
-	-- Hides all toggle labels.
 	ToggleAOE:Hide()
 	ToggleHelmCloak:Hide()
 	helm:Hide()
@@ -903,7 +1426,6 @@ function ToggleStackHide()
 end
 
 function ToggleADD()
-	-- Cycles toggle mode forward and updates the visible label.
 	Toggles = { "aoe", "ToggleHelmCloak", "helm", "cloak" }
 
 	ToggleItr = ToggleItr + 1	
@@ -917,7 +1439,6 @@ function ToggleADD()
 end
 
 function ToggleSUB()
-	-- Cycles toggle mode backward and updates the visible label.
 	Toggles = { "aoe", "ToggleHelmCloak", "helm", "cloak" }
 
 	ToggleItr = ToggleItr - 1	
@@ -931,35 +1452,28 @@ function ToggleSUB()
 end
 
 function SetToggle()
-	-- Sends: .partybot toggle <toggleName>
 	SendChatMessage(CMD_GENERAL .."toggle " .. AddToggle);
 end
 
 function SubPartyBotClone(self)
-	-- Sends: .partybot clone
 	SendChatMessage(CMD_PARTYBOT_CLONE);
 end
 
 function SubPartyBotRemove(self)
-	-- Sends: .partybot remove
 	SendChatMessage(CMD_PARTYBOT_REMOVE);
 end
 
 function SubPartyBotMoveAll()
-	-- Sends: .partybot moveall
 	SendChatMessage(CMD_PARTYBOT_MAll);
 end
 
 function SubPartyBotStayAll()
-	-- Sends: .partybot stayall
 	SendChatMessage(CMD_PARTYBOT_SAll);
 end
 
 AddClass = "warrior"
 ClassItr = 1
 function SetClassADD()
-	-- Cycles class forward and updates the class icon/label.
-	-- Also skips faction-only classes (Alliance paladin / Horde shaman).
 	Classes = { "warrior" , "paladin", "hunter", "rogue", "priest", "shaman", "mage", "warlock", "druid" }
 		
 	ClassItr = ClassItr + 1	
@@ -1004,8 +1518,6 @@ function SetClassADD()
 end
 
 function SetClassSUB()
-	-- Cycles class backward and updates the class icon/label.
-	-- Also skips faction-only classes (Alliance paladin / Horde shaman).
 	Classes = { "warrior" , "paladin", "hunter", "rogue", "priest", "shaman", "mage", "warlock", "druid" }
 
 	ClassItr = ClassItr - 1		
@@ -1050,7 +1562,6 @@ function SetClassSUB()
 end
 
 function RaceUpdate()
-	-- Updates the race selection defaults based on the currently selected class + player faction.
 	if Classes[ClassItr] == "warrior" then 
 		if UnitFactionGroup("player") == "Alliance" then 
 			RaceStackHide()
@@ -1171,8 +1682,6 @@ function RaceUpdate()
 end
 
 function RoleUpdate()
-	-- Updates the role selection defaults based on the currently selected class.
-	-- This controls what role string will be used for “Add PartyBot by role”.
 	if Classes[ClassItr] == "warrior" then 
 		RoleStackHide()
 		tank:Show()
@@ -1221,7 +1730,6 @@ function RoleUpdate()
 end
 
 function RaceStackHide()
-	-- Hides all race icons/labels in the race stack.
 	race:Hide()
 	human:Hide()
 	dwarf:Hide()
@@ -1236,7 +1744,6 @@ end
 AddRace = "race"
 RaceItr = 0
 function SetRaceADD()
-	-- Cycles race forward inside the current faction’s allowed race list for the chosen class.
 	if AddClass == "warrior" then	
 		if UnitFactionGroup("player") == "Alliance" then 
 			Races = { "human", "dwarf", "nightelf", "gnome", "race" }			
@@ -1401,7 +1908,6 @@ function SetRaceADD()
 end
 
 function SetRaceSUB()
-	-- Cycles race backward inside the current faction’s allowed race list for the chosen class.
 	if RaceItr == 0 then RaceItr = 5 end
 
 	if AddClass == "warrior" then	
@@ -1568,7 +2074,6 @@ function SetRaceSUB()
 end
 
 function RoleStackHide()
-	-- Hides all role icons/labels in the role stack.
 	tank:Hide()
 	healer:Hide()
 	meleedps:Hide()
@@ -1578,7 +2083,6 @@ end
 AddRole = "tank"
 RoleItr = 1
 function SetRoleADD()
-	-- Cycles role forward for the selected class (some classes have only one role option here).
 	if AddClass == "warrior" then
 		Roles = { "tank", "meleedps" }
 		
@@ -1665,7 +2169,6 @@ function SetRoleADD()
 end
 
 function SetRoleSUB()
-	-- Cycles role backward for the selected class.
 	if AddClass == "warrior" then
 		Roles = { "tank", "meleedps" }
 		
@@ -1752,7 +2255,6 @@ function SetRoleSUB()
 end
 
 function GenderStackHide()
-	-- Hides all gender icons/labels in the gender stack.
 	gender:Hide()
 	male:Hide()
 	female:Hide()
@@ -1761,7 +2263,6 @@ end
 AddGender = "gender"
 GenderItr = 1
 function SetGenderADD()
-	-- Cycles gender forward and updates the visible icon/label.
 		Genders = { "gender", "male", "female" }
 		
 		GenderItr = GenderItr + 1	
@@ -1774,7 +2275,6 @@ function SetGenderADD()
 end
 
 function SetGenderSUB()
-	-- Cycles gender backward and updates the visible icon/label.
 		Genders = { "gender", "male", "female" }
 
 		GenderItr = GenderItr - 1	
@@ -1789,14 +2289,12 @@ end
 AddBG = "warsong"
 BGItr = 1
 function BGStackHide()
-	-- Hides all battleground icons/labels in the BG stack.
 	warsong:Hide()
 	arathi:Hide()
 	alterac:Hide()
 end
 
 function SetBGADD()
-	-- Cycles battleground forward (Warsong/Arathi/Alterac).
 	BGS = { "warsong", "arathi", "alterac" }
 	
 	BGItr = BGItr + 1	
@@ -1809,7 +2307,6 @@ function SetBGADD()
 end
 
 function SetBGSUB()
-	-- Cycles battleground backward (Warsong/Arathi/Alterac).
 	BGS = { "warsong", "arathi", "alterac" }
 	
 	BGItr = BGItr - 1	
@@ -1822,18 +2319,14 @@ function SetBGSUB()
 end
 
 function SubPartyBotAddAdvanced(self)
-	-- Sends: .partybot add <class> <role> <gender>
-	-- Uses the currently selected values from the UI stacks.
 	SendChatMessage(CMD_PARTYBOT_ADD .. AddClass .. " " .. AddRole .. " " .. AddGender);
 end
 
 function SubPartyBotAdd(self, arg)
-	-- Sends: .partybot add <rawArg>
 	SendChatMessage(CMD_PARTYBOT_ADD .. arg);
 end
 
 function Brackets()
-	-- Picks a random bot level in your current PvP bracket (or 60 if you are 60).
 	if UnitLevel("player") >= 10 and UnitLevel("player") <= 19 then return math.random(10,19) 
 	elseif UnitLevel("player") >= 20 and UnitLevel("player") <= 29 then return math.random(20,29)
 	elseif UnitLevel("player") >= 30 and UnitLevel("player") <= 39 then return math.random(30,39)
@@ -1845,42 +2338,34 @@ function Brackets()
 end
 
 function SubBattleBotAdd(self, arg1, arg2)
-	-- Sends: .battlebot add <arg1> <arg2> <randomLevelFromBracket>
 	RanBotLevel = Brackets()
 	SendChatMessage(CMD_BATTLEBOT_ADD .. arg1 .. " " .. arg2 .. " " .. RanBotLevel);
 end
 
 function SubBattleGo(self, arg1)
-	-- Sends: .go <locationOrBG>
 	SendChatMessage(CMD_BATTLEGROUND_GO .. arg1);
 end
 
 function CloseFrame()
-	-- Closes the main PCP window (Close button).
 	PCPFrame:Hide();
 end
 
 function OpenFrame()
-	-- Opens the main PCP window and prints a loading message.
 	DEFAULT_CHAT_FRAME:AddMessage("Loading PartyBot Control Panel...");
 	DEFAULT_CHAT_FRAME:RegisterEvent('CHAT_MSG_SYSTEM')
 	PCPFrame:Show();
 end
 
-local PCPFrameShown = true
-local PCPButtonPosition = 268
-
--- Legacy minimap button code (circular minimap position math).
--- Note: This is separate from the newer minimap button code at the top of the file.
--- If you’re cleaning things up, you probably want to keep only one minimap-button system.
+local PCPFrameShown = false
+if type(PCPButtonPosition) ~= "number" then
+	PCPButtonPosition = 268
+end
 
 function PCPButtonFrame_OnClick()
-	-- Legacy minimap button click handler: toggles PCPFrame.
 	PCPButtonFrame_Toggle();
 end
 
 function PCPButtonFrame_Init()
-	-- Legacy minimap button init: shows/hides PCPFrame based on PCPFrameShown flag.
    
 	if(PCPFrameShown) then
 		PCPFrame:Show();
@@ -1890,7 +2375,6 @@ function PCPButtonFrame_Init()
 end
 
 function PCPButtonFrame_Toggle()
-	-- Legacy minimap button toggle: toggles PCPFrame visibility and refreshes state.
 	if(PCPFrame:IsVisible()) then
 		PCPFrame:Hide();
 		PCPFrameShown = false;
@@ -1902,14 +2386,12 @@ function PCPButtonFrame_Toggle()
 end
 
 function PCPButtonFrame_OnEnter(self)
-	-- Legacy minimap button tooltip.
     GameTooltip:SetOwner(self, "ANCHOR_LEFT");
     GameTooltip:SetText("PartyBot Control Panel \n Press Left Click to Open/Close \n Hold Right Click to move the icon");
     GameTooltip:Show();
 end
 
 function PCPButtonFrame_UpdatePosition()
-	-- Legacy minimap button positioning around the minimap edge using angle math.
 	PCPButtonFrame:SetPoint(
 		"TOPLEFT",
 		"Minimap",
@@ -1921,7 +2403,6 @@ function PCPButtonFrame_UpdatePosition()
 end
 
 function PCPButtonFrame_BeingDragged()
-	-- Legacy minimap button drag handler: converts cursor position to an angle.
    
     local xpos,ypos = GetCursorPosition() 
     local xmin,ymin = Minimap:GetLeft(), Minimap:GetBottom() 
@@ -1933,7 +2414,6 @@ function PCPButtonFrame_BeingDragged()
 end
 
 function PCPButtonFrame_SetPosition(v)
-	-- Legacy minimap button setter: normalizes degrees then applies position.
     if(v < 0) then
         v = v + 360;
     end
@@ -1944,7 +2424,6 @@ end
 
 SLASH_PCP1 = '/PCP'
 function SlashCmdList.PCP(msg, editbox)
-	-- Slash command: /PCP or /PCP cp toggles the PCP window.
     if (msg == "" or msg == "cp") then
         if (PCPFrame:IsVisible()) then
             PCPFrame:Hide()
@@ -1955,7 +2434,6 @@ function SlashCmdList.PCP(msg, editbox)
 end
 
 function ShowToggle()
-	-- Convenience toggle used by keybind (Show/Hide PCP).
 	if (PCPFrame:IsVisible()) then
 		PCPFrame:Hide()
 	else
@@ -1964,7 +2442,6 @@ function ShowToggle()
 end
 
 function JoinWorld()
-	-- Joins the “World” chat channel if you’re not already in it.
 	id, name = GetChannelName(1)
 	if (name ~= "World") then
 		JoinChannelByName("World", nil, ChatFrame1:GetID(), 0)

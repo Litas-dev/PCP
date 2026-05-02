@@ -1,10 +1,10 @@
-## Interface: 11200
-## Title: |cffeda55fPartyBot|r Control Panel
-## Notes: PartyBot Control Panel for SoloCraft server.
+## Interface: 11500
+## Title: PCP - PartyBot Control Panel (Custom)
+## Notes: Custom PCP fork for SoloCraft / PartyBot commands.
 ## Notes-zhCN: PartyBot Control Panel for the SoloCraft server.
 ## Author: Leontiesh (Edited by Solo for SoloCraft.org) (re-edited by pumpan) (re-re-redited by Arcticice)
 ## DefaultState: Enabled
-## Version: 1.4.1 - Custom
+## Version: 2.0.0 - Custom
 ## SavedVariables: PCPButtonPosition, PCPSettings
-PCP.xml
 PCP.lua
+PCP.xml

@@ -1,5 +1,5 @@
-# PCP (PartyBot Control Panel) — 1.4.1 - Custom
-PCP is a PartyBot Control Panel addon for SoloCraft / PartyBot commands. This is a custom build based on PCP Client 1.4.1.
+# PCP (PartyBot Control Panel) — 2.0.0 - Custom
+PCP is a PartyBot Control Panel addon for SoloCraft / PartyBot commands. This is a custom fork.
 
 ## Install
 1. Download / clone the repository.
@@ -7,13 +7,33 @@ PCP is a PartyBot Control Panel addon for SoloCraft / PartyBot commands. This is
    - `World of Warcraft/_classic_era_/Interface/AddOns/`
 3. Restart WoW or run `/reload`.
 
+## Updates
+- WoW addons cannot fetch GitHub releases directly (no HTTP), so PCP can’t auto-check the URL in-game.
+- PCP can still notify you if someone in your party/raid/guild has a newer version installed.
+- Releases: https://github.com/Litas-dev/PCP/releases
+
 ## Changelog
-### 1.4.1 - Custom
-- Version updated to `1.4.1 - Custom` (TOC + in-window version label).
-- Author metadata updated (adds: `re-re-redited by Arcticice`).
-- Version label positioned centered under the Close button (no overlap).
-- Improves compatibility with the FillRaidBots side buttons (FILL RAID / KICK ALL / REFILL):
-  - Keeps the buttons vertically centered to the PCP window when PCP sections are collapsed/expanded (unless FillRaidBots “move buttons” mode is enabled).
+### 2.0.0 - Custom
+- Version updated to `2.0.0 - Custom` (TOC + in-window version label).
+- Classic Era compatibility fixes:
+  - TOC Interface updated to `11500`.
+  - Fixes load order / double-loading issues that could break the UI.
+  - PCPFrame hidden by default at login (no more “stuck on screen”).
+  - Minimap button created on `PLAYER_LOGIN` (prevents early-load issues).
+- Modern UI (matches BGUltimate styling):
+  - Dark flat frame styling + modernized text buttons.
+  - Minimap button styled and cropped.
+  - Adds tabs: Bots / Commands / Marks / All.
+  - Adds “last used” click flash (1s highlight).
+- Gear (options) menu:
+  - UI Scale slider (0.8–1.3).
+  - Big Font toggle.
+- Saved settings improvements:
+  - Saves UI settings under `PCPSettings.ui` (scale, bigFont, activeTab).
+  - Tabs no longer overwrite your saved section enable/disable settings.
+- External addon compatibility:
+  - Avoids re-skinning icon-only buttons (keeps gear icon visible).
+  - Avoids breaking FillRaidBots side buttons (icons stay intact).
 
 ## Notes
-- Upstream project: https://github.com/Litas-dev/PCP
+- Upstream: https://github.com/Litas-dev/PCP
