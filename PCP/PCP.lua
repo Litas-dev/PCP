@@ -863,42 +863,12 @@ local function PCP_InitCollapsible(frame)
             end
         end
 
-        local function ApplySavedTabFilter()
-            if not frame._pcpLayout or not frame._pcpLayout.sections then return end
-
-            local tabKey = (type(PCPSettings) == "table" and type(PCPSettings.ui) == "table" and PCPSettings.ui.activeTab) or "Bots"
-            local showAll = tabKey == "All"
-            local showBots = tabKey == "Bots"
-            local showCommands = tabKey == "Commands"
-            local showMarks = tabKey == "Marks"
-
-            for _, sec in ipairs(frame._pcpLayout.sections) do
-                local savedEnabled = true
-                if type(PCPSettings) == "table" and type(PCPSettings.sectionEnabled) == "table" then
-                    savedEnabled = PCPSettings.sectionEnabled[sec.baseText] ~= false
-                end
-
-                local enabled = false
-                if showAll then
-                    enabled = savedEnabled
-                elseif showBots then
-                    enabled = (sec.baseText == "PartyBot Configurator" or sec.baseText == "Add PartyBot by role") and savedEnabled
-                elseif showCommands then
-                    enabled = (sec.baseText == "Commands" or sec.baseText == "Come" or sec.baseText == "Move" or sec.baseText == "Stay") and savedEnabled
-                elseif showMarks then
-                    enabled = (sec.baseText == "Mark Configurator") and savedEnabled
-                end
-
-                sec.enabled = enabled and true or false
-            end
-        end
-
         local function EnsureUiPopup()
             if frame._pcpUiPopup then return end
 
             local popup = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
             popup:SetPoint("TOPRIGHT", optionsButton, "BOTTOMRIGHT", 0, -6)
-            popup:SetSize(260, 240)
+            popup:SetSize(240, 120)
             popup:SetFrameStrata("DIALOG")
             popup:SetFrameLevel(200)
             if popup.SetClampedToScreen then
@@ -1004,34 +974,6 @@ local function PCP_InitCollapsible(frame)
                 end
             end)
 
-            local contentTitle = popup:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            contentTitle:SetPoint("TOPLEFT", popup, "TOPLEFT", 10, -108)
-            contentTitle:SetText("Content")
-
-            popup._pcpSectionChecks = popup._pcpSectionChecks or {}
-            local y = -126
-            for _, sec in ipairs(frame._pcpLayout and frame._pcpLayout.sections or {}) do
-                local check = CreateFrame("CheckButton", nil, popup, "UICheckButtonTemplate")
-                check:SetPoint("TOPLEFT", popup, "TOPLEFT", 10, y)
-                check._pcpSection = sec
-                check:SetChecked(sec.enabled and true or false)
-                local label = check:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-                label:SetPoint("LEFT", check, "RIGHT", 4, 1)
-                label:SetText(sec.baseText)
-                check:SetScript("OnClick", function(self)
-                    HoldOpen()
-                    local s = self._pcpSection
-                    if not s then return end
-                    SetSectionEnabled(s, self:GetChecked() and true or false)
-                    ApplySavedTabFilter()
-                    if frame._pcpLayout then
-                        frame._pcpLayout:Relayout()
-                    end
-                end)
-                popup._pcpSectionChecks[#popup._pcpSectionChecks + 1] = check
-                y = y - 22
-            end
-
             frame._pcpUiPopup = popup
             frame._pcpUiScaleSlider = slider
             frame._pcpUiBigFont = cb
@@ -1049,19 +991,6 @@ local function PCP_InitCollapsible(frame)
                 end
                 if frame._pcpUiBigFont then
                     frame._pcpUiBigFont:SetChecked(type(PCPSettings) == "table" and type(PCPSettings.ui) == "table" and PCPSettings.ui.bigFont and true or false)
-                end
-                ApplySavedTabFilter()
-                if frame._pcpUiPopup and frame._pcpUiPopup._pcpSectionChecks then
-                    for _, check in ipairs(frame._pcpUiPopup._pcpSectionChecks) do
-                        local sec = check and check._pcpSection
-                        if sec then
-                            local savedEnabled = true
-                            if type(PCPSettings) == "table" and type(PCPSettings.sectionEnabled) == "table" then
-                                savedEnabled = PCPSettings.sectionEnabled[sec.baseText] ~= false
-                            end
-                            check:SetChecked(savedEnabled and true or false)
-                        end
-                    end
                 end
                 p:Show()
                 p._pcpAutoHideAcc = 0
