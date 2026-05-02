@@ -20,7 +20,7 @@ PCP is a PartyBot Control Panel addon for SoloCraft / PartyBot commands. This is
   - Fixes load order / double-loading issues that could break the UI.
   - PCPFrame hidden by default at login (no more “stuck on screen”).
   - Minimap button created on `PLAYER_LOGIN` (prevents early-load issues).
-- Modern UI (matches BGUltimate styling):
+- Modern UI:
   - Dark flat frame styling + modernized text buttons.
   - Minimap button styled and cropped.
   - Adds tabs: Bots / Commands / Marks / All.
