@@ -13,6 +13,11 @@ PCP is a PartyBot Control Panel addon for SoloCraft / PartyBot commands. This is
 - Releases: https://github.com/Litas-dev/PCP/releases
 
 ## Changelog
+### 2.1.3 - Custom
+- Safer version sync:
+  - Notifies only once per newer version seen (reduces chat spam).
+  - Shows where to download: https://github.com/Litas-dev/PCP/releases
+
 ### 2.1.2 - Custom
 - Version updated to `2.1.2 - Custom` (TOC + in-window version label).
 - Macro Mode:
