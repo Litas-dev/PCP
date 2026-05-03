@@ -13,6 +13,30 @@ PCP is a PartyBot Control Panel addon for SoloCraft / PartyBot commands. This is
 - Releases: https://github.com/Litas-dev/PCP/releases
 
 ## Changelog
+### 2.1.0 - Custom
+- Version updated to `2.1.0 - Custom` (TOC + in-window version label).
+- Quick Windows system:
+  - Create unlimited small, closable quick windows (each window has its own buttons + layout).
+  - Big “Quick Windows” manager UI (Gear → Quick Windows…) to create/copy/delete windows.
+  - Command library + custom button creator (label + command) to build quick bars in-game.
+  - Reorder/remove buttons inside a window and change layout (Row/Grid) + columns.
+  - Row layout now wraps (won’t run out of the window when you add more buttons).
+  - Quick windows remember position and show/hide state.
+  - Opening the main PCP frame re-opens visible quick windows.
+- Quick Windows manager UI improvements:
+  - Modern scrollbar styling (thin thumb, no default arrow buttons).
+  - Modern Row/Grid toggle (no Blizzard dropdown).
+  - Modern edit box styling (search/title/columns/custom fields).
+- Quick command library improvements:
+  - Adds bot shortcuts (Add Tank/Healer/DPS, Clone, Remove).
+  - Adds marking shortcuts that work without selecting CC/Focus first:
+    - CC Moon/Star/Circle/Diamond/Triangle/Square/Cross/Skull
+    - Focus Moon/Star/Circle/Diamond/Triangle/Square/Cross/Skull
+    - Clear CC / Clear Focus / Clear All Marks
+- UI behavior fixes:
+  - UI Settings auto-hide no longer disappears while you drag the scale slider.
+  - UI Settings scale/font changes also apply to the main quick bar.
+
 ### 2.0.0 - Custom
 - Version updated to `2.0.0 - Custom` (TOC + in-window version label).
 - Classic Era compatibility fixes:
