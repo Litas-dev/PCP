@@ -1,4 +1,4 @@
-# PCP (PartyBot Control Panel) — 2.0.0 - Custom ![Downloads](https://img.shields.io/github/downloads/Litas-dev/PCP/total?label=Downloads&logo=github&color=blue)
+# PCP (PartyBot Control Panel) — Custom ![Downloads](https://img.shields.io/github/downloads/Litas-dev/PCP/total?label=Downloads&logo=github&color=blue)
 PCP is a PartyBot Control Panel addon for SoloCraft / PartyBot commands. This is a custom fork.
 
 ## Install
