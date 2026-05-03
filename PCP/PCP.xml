@@ -120,7 +120,7 @@
 					</Anchors>
 				</FontString>
 
-				<FontString name="version" inherits="GameFontHighlightSmallOutline" text="v2.0.0 - Custom">
+				<FontString name="version" inherits="GameFontHighlightSmallOutline" text="v2.1.0 - Custom">
 					<Size x="220" y="20" />
 					<Anchors>
 						<Anchor point="CENTER" relativePoint="BOTTOMRIGHT">

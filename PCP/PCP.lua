@@ -381,6 +381,18 @@ local function PCP_InitSettings()
     if type(PCPSettings.ui) ~= "table" then
         PCPSettings.ui = {}
     end
+    if type(PCPSettings.quick) ~= "table" then
+        PCPSettings.quick = {}
+    end
+    if type(PCPSettings.quick.windows) ~= "table" then
+        PCPSettings.quick.windows = {}
+    end
+    if type(PCPSettings.quick.order) ~= "table" then
+        PCPSettings.quick.order = {}
+    end
+    if type(PCPSettings.quick.nextId) ~= "number" then
+        PCPSettings.quick.nextId = 1
+    end
 
     local defaults = {
         ["PartyBot Configurator"] = true,
@@ -406,6 +418,25 @@ local function PCP_InitSettings()
     end
     if type(PCPSettings.ui.bigFont) ~= "boolean" then
         PCPSettings.ui.bigFont = false
+    end
+
+    if not PCPSettings.quick.windows["quick"] then
+        PCPSettings.quick.windows["quick"] = {
+            id = "quick",
+            title = "Quick",
+            visible = true,
+            closeOnEsc = false,
+            layout = { type = "row", columns = 3, buttonW = 88, buttonH = 26, spacing = 8 },
+            pos = { point = "CENTER", relPoint = "CENTER", x = 0, y = 220 },
+            buttons = {
+                { label = "Move Heal", cmd = "moveheal" },
+                { label = "Come Heal", cmd = "comeheal" },
+                { label = "Stay", cmd = "stay" },
+            },
+        }
+    end
+    if #PCPSettings.quick.order == 0 then
+        PCPSettings.quick.order[1] = "quick"
     end
 end
 
@@ -558,9 +589,808 @@ PCP_AlignExternalButtons = function(frame)
     end
 end
 
+local PCP_QuickRuntime = { frames = {} }
+
+local function PCP_QuickSanitizeId(id)
+    id = tostring(id or "")
+    id = string.gsub(id, "[^%w_]", "_")
+    if id == "" then id = "win" end
+    return id
+end
+
+local function PCP_QuickEnsureEsc(frameName, closeOnEsc)
+    if type(UISpecialFrames) ~= "table" or type(frameName) ~= "string" then return end
+    for i = #UISpecialFrames, 1, -1 do
+        if UISpecialFrames[i] == frameName then
+            table.remove(UISpecialFrames, i)
+        end
+    end
+    if closeOnEsc then
+        table.insert(UISpecialFrames, frameName)
+    end
+end
+
+local function PCP_QuickApplyPos(frame, pos)
+    if not frame or not frame.SetPoint then return end
+    if type(pos) ~= "table" then return end
+    local point = pos.point or "CENTER"
+    local relPoint = pos.relPoint or point
+    local x = tonumber(pos.x) or 0
+    local y = tonumber(pos.y) or 0
+    frame:ClearAllPoints()
+    frame:SetPoint(point, UIParent, relPoint, x, y)
+end
+
+local function PCP_QuickSavePos(frame, def)
+    if not frame or not def then return end
+    if not def.pos then def.pos = {} end
+    local point, _, relPoint, x, y = frame:GetPoint(1)
+    def.pos.point = point or "CENTER"
+    def.pos.relPoint = relPoint or point or "CENTER"
+    def.pos.x = tonumber(x) or 0
+    def.pos.y = tonumber(y) or 0
+end
+
+local function PCP_QuickComputeSize(def)
+    local layout = (type(def) == "table" and type(def.layout) == "table") and def.layout or {}
+    local buttons = (type(def) == "table" and type(def.buttons) == "table") and def.buttons or {}
+    local buttonW = tonumber(layout.buttonW) or 88
+    local buttonH = tonumber(layout.buttonH) or 26
+    local spacing = tonumber(layout.spacing) or 8
+    local leftPad, rightPad = 10, 10
+    local topPad, bottomPad = 34, 10
+    local headerH = 28
+
+    local t = tostring(layout.type or "row")
+    local columns = tonumber(layout.columns) or 3
+    if columns < 1 then columns = 1 end
+    if #buttons == 0 then
+        columns = 1
+    end
+    if #buttons > 0 and columns > #buttons then
+        columns = #buttons
+    end
+    local rows = math.max(1, math.ceil((#buttons > 0 and #buttons or 1) / columns))
+
+    local contentW = (columns * buttonW) + ((columns - 1) * spacing)
+    local contentH = (rows * buttonH) + ((rows - 1) * spacing)
+    local w = leftPad + contentW + rightPad
+    local h = headerH + (topPad - headerH) + contentH + bottomPad
+    if w < 160 then w = 160 end
+    if h < 60 then h = 60 end
+    return w, h, leftPad, topPad, buttonW, buttonH, spacing, columns, t
+end
+
+local function PCP_QuickRebuild(id, frameNameOverride)
+    PCP_InitSettings()
+    if type(PCPSettings) ~= "table" or type(PCPSettings.quick) ~= "table" or type(PCPSettings.quick.windows) ~= "table" then
+        return nil
+    end
+
+    id = tostring(id or "")
+    local def = PCPSettings.quick.windows[id]
+    if type(def) ~= "table" then return nil end
+
+    local frameName = frameNameOverride or ("PCPQuickWindow_" .. PCP_QuickSanitizeId(id))
+    local frame = _G[frameName]
+    if not frame then
+        frame = CreateFrame("Frame", frameName, UIParent, "BackdropTemplate")
+        frame:SetMovable(true)
+        frame:EnableMouse(true)
+        frame:RegisterForDrag("LeftButton")
+        frame:SetScript("OnDragStart", function(self)
+            if type(def.locked) == "boolean" and def.locked then return end
+            self:StartMoving()
+        end)
+        frame:SetScript("OnDragStop", function(self)
+            self:StopMovingOrSizing()
+            PCP_QuickSavePos(self, def)
+        end)
+    end
+
+    PCP_QuickRuntime.frames[id] = frame
+
+    local w, h, leftPad, topPad, buttonW, buttonH, spacing, columns, layoutType = PCP_QuickComputeSize(def)
+    frame:SetSize(w, h)
+
+    if not frame._pcpQuickTitle then
+        local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        title:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -7)
+        frame._pcpQuickTitle = title
+
+        local close = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
+        close:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 2, 2)
+        frame._pcpQuickClose = close
+    end
+
+    frame._pcpQuickTitle:SetText(tostring(def.title or "Quick"))
+
+    for _, b in ipairs(frame._pcpQuickButtons or {}) do
+        if b and b.Hide then b:Hide() end
+    end
+    frame._pcpQuickButtons = {}
+
+    local buttons = (type(def.buttons) == "table") and def.buttons or {}
+    for i, bd in ipairs(buttons) do
+        local b = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+        b:SetSize(buttonW, buttonH)
+        b:SetText(tostring((type(bd) == "table" and bd.label) or ""))
+        b:SetScript("OnClick", function()
+            local cmd = type(bd) == "table" and bd.cmd
+            if type(cmd) == "string" and cmd ~= "" and type(SetCommand) == "function" then
+                SetCommand(cmd)
+            end
+        end)
+
+        local col = ((i - 1) % columns) + 1
+        local row = math.floor((i - 1) / columns) + 1
+
+        local x = leftPad + ((col - 1) * (buttonW + spacing))
+        local y = -topPad - ((row - 1) * (buttonH + spacing))
+        b:SetPoint("TOPLEFT", frame, "TOPLEFT", x, y)
+
+        frame._pcpQuickButtons[#frame._pcpQuickButtons + 1] = b
+    end
+
+    PCP_SkinFrame(frame)
+    PCP_SkinAllButtons(frame)
+    PCP_QuickApplyPos(frame, def.pos)
+    PCP_ApplyScale(frame)
+    PCP_ApplyFontMode(frame)
+    PCP_QuickEnsureEsc(frameName, def.closeOnEsc and true or false)
+
+    if def.visible == false then
+        frame:Hide()
+    else
+        frame:Show()
+    end
+
+    return frame
+end
+
+local function PCP_CreateQuickBar()
+    return PCP_QuickRebuild("quick", "PCPQuickBarFrame")
+end
+
+local PCP_QuickCommandLibrary = {
+    { label = "Add Tank", cmd = "add tank" },
+    { label = "Add Healer", cmd = "add healer" },
+    { label = "Add DPS", cmd = "add dps" },
+    { label = "Clone", cmd = "clone" },
+    { label = "Remove", cmd = "remove" },
+    { label = "Come", cmd = "come" },
+    { label = "Come Tank", cmd = "cometank" },
+    { label = "Come Heal", cmd = "comeheal" },
+    { label = "Come Melee", cmd = "comemelee" },
+    { label = "Come Range", cmd = "comerange" },
+    { label = "Move", cmd = "move" },
+    { label = "Move Tank", cmd = "movetank" },
+    { label = "Move Heal", cmd = "moveheal" },
+    { label = "Move Melee", cmd = "movemelee" },
+    { label = "Move Range", cmd = "moverange" },
+    { label = "Stay", cmd = "stay" },
+    { label = "Stay Tank", cmd = "staytank" },
+    { label = "Stay Heal", cmd = "stayheal" },
+    { label = "Stay Melee", cmd = "staymelee" },
+    { label = "Stay Range", cmd = "stayrange" },
+    { label = "Start", cmd = "attackstart" },
+    { label = "Stop", cmd = "attackstop" },
+    { label = "Pause", cmd = "pause" },
+    { label = "Unpause", cmd = "unpause" },
+    { label = "Pause All", cmd = "pause all" },
+    { label = "Unpause All", cmd = "unpause all" },
+    { label = "AoE", cmd = "aoe" },
+    { label = "Pull", cmd = "pull" },
+    { label = "Object", cmd = "use" },
+    { label = "Spread", cmd = "spread" },
+    { label = "Spread Stop", cmd = "spreadoff" },
+    { label = "Distance On", cmd = "distance on" },
+    { label = "Distance Off", cmd = "distance off" },
+    { label = "CC Moon", cmd = "ccmark moon" },
+    { label = "CC Star", cmd = "ccmark star" },
+    { label = "CC Circle", cmd = "ccmark circle" },
+    { label = "CC Diamond", cmd = "ccmark diamond" },
+    { label = "CC Triangle", cmd = "ccmark triangle" },
+    { label = "CC Square", cmd = "ccmark square" },
+    { label = "CC Cross", cmd = "ccmark cross" },
+    { label = "CC Skull", cmd = "ccmark skull" },
+    { label = "Focus Moon", cmd = "focusmark moon" },
+    { label = "Focus Star", cmd = "focusmark star" },
+    { label = "Focus Circle", cmd = "focusmark circle" },
+    { label = "Focus Diamond", cmd = "focusmark diamond" },
+    { label = "Focus Triangle", cmd = "focusmark triangle" },
+    { label = "Focus Square", cmd = "focusmark square" },
+    { label = "Focus Cross", cmd = "focusmark cross" },
+    { label = "Focus Skull", cmd = "focusmark skull" },
+    { label = "Clear CC", cmd = "clear ccmark" },
+    { label = "Clear Focus", cmd = "clear focusmark" },
+    { label = "Clear All Marks", cmd = "clear" },
+}
+
+local function PCP_QuickRebuildAllVisible()
+    PCP_InitSettings()
+    if type(PCPSettings) ~= "table" or type(PCPSettings.quick) ~= "table" then return end
+    if type(PCPSettings.quick.order) ~= "table" or type(PCPSettings.quick.windows) ~= "table" then return end
+
+    for _, id in ipairs(PCPSettings.quick.order) do
+        local def = PCPSettings.quick.windows[id]
+        if type(def) == "table" and def.visible ~= false then
+            if id == "quick" then
+                PCP_QuickRebuild(id, "PCPQuickBarFrame")
+            else
+                PCP_QuickRebuild(id)
+            end
+        end
+    end
+end
+
+local function PCP_OpenQuickWindowsManager()
+    PCP_InitSettings()
+    if _G.PCPQuickWindowsManagerFrame and _G.PCPQuickWindowsManagerFrame.Show then
+        _G.PCPQuickWindowsManagerFrame:Show()
+        return
+    end
+
+    local manager = CreateFrame("Frame", "PCPQuickWindowsManagerFrame", UIParent, "BackdropTemplate")
+    manager:SetSize(720, 460)
+    manager:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    manager:SetMovable(true)
+    manager:EnableMouse(true)
+    manager:RegisterForDrag("LeftButton")
+    manager:SetScript("OnDragStart", function(self) self:StartMoving() end)
+    manager:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
+    PCP_SkinFrame(manager)
+
+    local title = manager:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    title:SetPoint("TOPLEFT", manager, "TOPLEFT", 12, -8)
+    title:SetText("Quick Windows")
+
+    local close = CreateFrame("Button", nil, manager, "UIPanelCloseButton")
+    close:SetPoint("TOPRIGHT", manager, "TOPRIGHT", 2, 2)
+
+    local left = CreateFrame("Frame", nil, manager, "BackdropTemplate")
+    left:SetPoint("TOPLEFT", manager, "TOPLEFT", 10, -36)
+    left:SetSize(200, 414)
+    left:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        tile = true,
+        tileSize = 16,
+        edgeSize = 1,
+        insets = { left = 1, right = 1, top = 1, bottom = 1 },
+    })
+    left:SetBackdropColor(0.05, 0.06, 0.08, 0.55)
+    left:SetBackdropBorderColor(1, 1, 1, 0.06)
+
+    local mid = CreateFrame("Frame", nil, manager, "BackdropTemplate")
+    mid:SetPoint("TOPLEFT", left, "TOPRIGHT", 10, 0)
+    mid:SetSize(240, 414)
+    mid:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        tile = true,
+        tileSize = 16,
+        edgeSize = 1,
+        insets = { left = 1, right = 1, top = 1, bottom = 1 },
+    })
+    mid:SetBackdropColor(0.05, 0.06, 0.08, 0.55)
+    mid:SetBackdropBorderColor(1, 1, 1, 0.06)
+
+    local right = CreateFrame("Frame", nil, manager, "BackdropTemplate")
+    right:SetPoint("TOPLEFT", mid, "TOPRIGHT", 10, 0)
+    right:SetSize(250, 414)
+    right:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        tile = true,
+        tileSize = 16,
+        edgeSize = 1,
+        insets = { left = 1, right = 1, top = 1, bottom = 1 },
+    })
+    right:SetBackdropColor(0.05, 0.06, 0.08, 0.55)
+    right:SetBackdropBorderColor(1, 1, 1, 0.06)
+
+    manager._pcpSelectedWindowId = manager._pcpSelectedWindowId or "quick"
+    manager._pcpSelectedButtonIndex = nil
+    manager._pcpLibraryFilter = ""
+
+    local function SkinEditBox(eb)
+        if not eb or eb._pcpModernSkinned then return end
+        eb._pcpModernSkinned = true
+        if eb.SetAutoFocus then
+            eb:SetAutoFocus(false)
+        end
+        if eb.SetTextInsets then
+            eb:SetTextInsets(8, 8, 4, 4)
+        end
+        if eb.SetBackdrop then
+            eb:SetBackdrop({
+                bgFile = "Interface\\Buttons\\WHITE8x8",
+                edgeFile = "Interface\\Buttons\\WHITE8x8",
+                tile = true,
+                tileSize = 16,
+                edgeSize = 1,
+                insets = { left = 1, right = 1, top = 1, bottom = 1 },
+            })
+            if eb.SetBackdropColor then
+                eb:SetBackdropColor(0.06, 0.07, 0.08, 0.92)
+            end
+            if eb.SetBackdropBorderColor then
+                eb:SetBackdropBorderColor(0, 0, 0, 0.95)
+            end
+        end
+        for _, r in ipairs({ eb:GetRegions() }) do
+            if r and r.GetObjectType and r:GetObjectType() == "Texture" and r.GetTexture then
+                local t = r:GetTexture()
+                if type(t) == "string" and string.find(t, "UI-InputBox", 1, true) then
+                    r:SetAlpha(0)
+                end
+            end
+        end
+    end
+
+    local function SkinScrollFrame(sf)
+        if not sf or sf._pcpModernSkinned then return end
+        sf._pcpModernSkinned = true
+        if sf.EnableMouseWheel then
+            sf:EnableMouseWheel(true)
+        end
+
+        local sb = sf.ScrollBar
+        if not sb and sf.GetChildren then
+            for _, c in ipairs({ sf:GetChildren() }) do
+                if c and c.GetObjectType and c:GetObjectType() == "Slider" then
+                    sb = c
+                    break
+                end
+            end
+        end
+        if sb then
+            if sb.SetWidth then
+                sb:SetWidth(10)
+            end
+            for _, r in ipairs({ sb:GetRegions() }) do
+                if r and r.GetObjectType and r:GetObjectType() == "Texture" then
+                    r:SetAlpha(0)
+                end
+            end
+            if sb.ScrollUpButton then sb.ScrollUpButton:Hide() end
+            if sb.ScrollDownButton then sb.ScrollDownButton:Hide() end
+            if sb.SetThumbTexture then
+                sb:SetThumbTexture("Interface\\Buttons\\WHITE8x8")
+            end
+            local thumb = sb.GetThumbTexture and sb:GetThumbTexture()
+            if thumb then
+                thumb:SetVertexColor(0.18, 0.20, 0.26, 0.95)
+                thumb:SetSize(10, 40)
+            end
+            if not sb._pcpModernBg then
+                local bg = sb:CreateTexture(nil, "BACKGROUND")
+                bg:SetAllPoints()
+                PCP_SetSolid(bg, 0, 0, 0, 0.30)
+                sb._pcpModernBg = bg
+            end
+        end
+    end
+
+    local function GetDef(id)
+        if type(PCPSettings) ~= "table" or type(PCPSettings.quick) ~= "table" then return nil end
+        if type(PCPSettings.quick.windows) ~= "table" then return nil end
+        return PCPSettings.quick.windows[id]
+    end
+
+    local function EnsureUniqueId()
+        local base = "win"
+        local n = tonumber(PCPSettings.quick.nextId) or 1
+        while true do
+            local id = base .. tostring(n)
+            if not PCPSettings.quick.windows[id] then
+                PCPSettings.quick.nextId = n + 1
+                return id
+            end
+            n = n + 1
+        end
+    end
+
+    local function SelectWindow(id)
+        manager._pcpSelectedWindowId = id
+        manager._pcpSelectedButtonIndex = nil
+        if manager._pcpRefreshAll then
+            manager._pcpRefreshAll()
+        end
+    end
+
+    local winListTitle = left:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    winListTitle:SetPoint("TOPLEFT", left, "TOPLEFT", 10, -10)
+    winListTitle:SetText("Windows")
+
+    local listScroll = CreateFrame("ScrollFrame", nil, left, "UIPanelScrollFrameTemplate")
+    listScroll:SetPoint("TOPLEFT", left, "TOPLEFT", 8, -28)
+    listScroll:SetPoint("BOTTOMRIGHT", left, "BOTTOMRIGHT", -28, 44)
+    SkinScrollFrame(listScroll)
+    local listContent = CreateFrame("Frame", nil, listScroll)
+    listContent:SetSize(1, 1)
+    listScroll:SetScrollChild(listContent)
+    left._pcpListButtons = {}
+
+    local btnNew = CreateFrame("Button", nil, left, "UIPanelButtonTemplate")
+    btnNew:SetSize(60, 22)
+    btnNew:SetPoint("BOTTOMLEFT", left, "BOTTOMLEFT", 8, 10)
+    btnNew:SetText("New")
+    btnNew:SetScript("OnClick", function()
+        local id = EnsureUniqueId()
+        PCPSettings.quick.windows[id] = {
+            id = id,
+            title = "Quick " .. id,
+            visible = true,
+            closeOnEsc = false,
+            layout = { type = "row", columns = 3, buttonW = 88, buttonH = 26, spacing = 8 },
+            pos = { point = "CENTER", relPoint = "CENTER", x = 0, y = 0 },
+            buttons = {},
+        }
+        PCPSettings.quick.order[#PCPSettings.quick.order + 1] = id
+        PCP_QuickRebuild(id)
+        SelectWindow(id)
+    end)
+
+    local btnDup = CreateFrame("Button", nil, left, "UIPanelButtonTemplate")
+    btnDup:SetSize(60, 22)
+    btnDup:SetPoint("LEFT", btnNew, "RIGHT", 6, 0)
+    btnDup:SetText("Copy")
+    btnDup:SetScript("OnClick", function()
+        local cur = GetDef(manager._pcpSelectedWindowId)
+        if type(cur) ~= "table" then return end
+        local id = EnsureUniqueId()
+        local copy = {}
+        for k, v in pairs(cur) do
+            if k ~= "id" then
+                copy[k] = v
+            end
+        end
+        copy.id = id
+        copy.title = tostring(cur.title or "Quick") .. " Copy"
+        if type(cur.buttons) == "table" then
+            copy.buttons = {}
+            for i, bd in ipairs(cur.buttons) do
+                copy.buttons[i] = { label = bd.label, cmd = bd.cmd }
+            end
+        end
+        if type(cur.layout) == "table" then
+            copy.layout = { type = cur.layout.type, columns = cur.layout.columns, buttonW = cur.layout.buttonW, buttonH = cur.layout.buttonH, spacing = cur.layout.spacing }
+        end
+        if type(cur.pos) == "table" then
+            copy.pos = { point = cur.pos.point, relPoint = cur.pos.relPoint, x = cur.pos.x, y = cur.pos.y }
+        end
+        PCPSettings.quick.windows[id] = copy
+        PCPSettings.quick.order[#PCPSettings.quick.order + 1] = id
+        PCP_QuickRebuild(id)
+        SelectWindow(id)
+    end)
+
+    local btnDel = CreateFrame("Button", nil, left, "UIPanelButtonTemplate")
+    btnDel:SetSize(60, 22)
+    btnDel:SetPoint("LEFT", btnDup, "RIGHT", 6, 0)
+    btnDel:SetText("Delete")
+    btnDel:SetScript("OnClick", function()
+        local id = manager._pcpSelectedWindowId
+        if id == "quick" then return end
+        if not PCPSettings.quick.windows[id] then return end
+        PCPSettings.quick.windows[id] = nil
+        for i = #PCPSettings.quick.order, 1, -1 do
+            if PCPSettings.quick.order[i] == id then
+                table.remove(PCPSettings.quick.order, i)
+            end
+        end
+        local f = PCP_QuickRuntime.frames[id]
+        if f and f.Hide then f:Hide() end
+        PCP_QuickRuntime.frames[id] = nil
+        SelectWindow("quick")
+    end)
+
+    local libTitle = mid:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    libTitle:SetPoint("TOPLEFT", mid, "TOPLEFT", 10, -10)
+    libTitle:SetText("Commands")
+
+    local searchBox = CreateFrame("EditBox", nil, mid, "InputBoxTemplate")
+    searchBox:SetSize(190, 20)
+    searchBox:SetPoint("TOPLEFT", mid, "TOPLEFT", 10, -26)
+    searchBox:SetText("")
+    SkinEditBox(searchBox)
+    searchBox:SetScript("OnTextChanged", function(self)
+        manager._pcpLibraryFilter = self:GetText() or ""
+        if manager._pcpRefreshLibrary then
+            manager._pcpRefreshLibrary()
+        end
+    end)
+
+    local libScroll = CreateFrame("ScrollFrame", nil, mid, "UIPanelScrollFrameTemplate")
+    libScroll:SetPoint("TOPLEFT", mid, "TOPLEFT", 8, -52)
+    libScroll:SetPoint("BOTTOMRIGHT", mid, "BOTTOMRIGHT", -28, 90)
+    SkinScrollFrame(libScroll)
+    local libContent = CreateFrame("Frame", nil, libScroll)
+    libContent:SetSize(1, 1)
+    libScroll:SetScrollChild(libContent)
+    mid._pcpLibButtons = {}
+
+    local customTitle = mid:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    customTitle:SetPoint("TOPLEFT", mid, "BOTTOMLEFT", 10, 80)
+    customTitle:SetText("Custom Button")
+
+    local customLabel = CreateFrame("EditBox", nil, mid, "InputBoxTemplate")
+    customLabel:SetSize(100, 20)
+    customLabel:SetPoint("TOPLEFT", mid, "BOTTOMLEFT", 10, 60)
+    customLabel:SetText("Label")
+    SkinEditBox(customLabel)
+
+    local customCmd = CreateFrame("EditBox", nil, mid, "InputBoxTemplate")
+    customCmd:SetSize(100, 20)
+    customCmd:SetPoint("LEFT", customLabel, "RIGHT", 10, 0)
+    customCmd:SetText("cmd")
+    SkinEditBox(customCmd)
+
+    local btnAddCustom = CreateFrame("Button", nil, mid, "UIPanelButtonTemplate")
+    btnAddCustom:SetSize(80, 22)
+    btnAddCustom:SetPoint("TOPLEFT", mid, "BOTTOMLEFT", 10, 34)
+    btnAddCustom:SetText("Add")
+    btnAddCustom:SetScript("OnClick", function()
+        local def = GetDef(manager._pcpSelectedWindowId)
+        if type(def) ~= "table" then return end
+        def.buttons = def.buttons or {}
+        local labelText = customLabel:GetText() or ""
+        local cmdText = customCmd:GetText() or ""
+        if labelText == "" or cmdText == "" then return end
+        def.buttons[#def.buttons + 1] = { label = labelText, cmd = cmdText }
+        PCP_QuickRebuild(def.id, def.id == "quick" and "PCPQuickBarFrame" or nil)
+        if manager._pcpRefreshAll then manager._pcpRefreshAll() end
+    end)
+
+    local editTitle = right:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    editTitle:SetPoint("TOPLEFT", right, "TOPLEFT", 10, -10)
+    editTitle:SetText("Window")
+
+    local titleBox = CreateFrame("EditBox", nil, right, "InputBoxTemplate")
+    titleBox:SetSize(170, 20)
+    titleBox:SetPoint("TOPLEFT", right, "TOPLEFT", 10, -26)
+    SkinEditBox(titleBox)
+
+    local visibleCB = CreateFrame("CheckButton", nil, right, "UICheckButtonTemplate")
+    visibleCB:SetPoint("TOPLEFT", right, "TOPLEFT", 10, -52)
+    local visibleTxt = visibleCB:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    visibleTxt:SetPoint("LEFT", visibleCB, "RIGHT", 4, 1)
+    visibleTxt:SetText("Visible")
+    visibleCB:SetScript("OnClick", function(self)
+        local def = GetDef(manager._pcpSelectedWindowId)
+        if type(def) ~= "table" then return end
+        def.visible = self:GetChecked() and true or false
+        PCP_QuickRebuild(def.id, def.id == "quick" and "PCPQuickBarFrame" or nil)
+    end)
+
+    local layoutLabel = right:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    layoutLabel:SetPoint("TOPLEFT", right, "TOPLEFT", 10, -76)
+    layoutLabel:SetText("Layout")
+
+    local layoutRowBtn = CreateFrame("Button", nil, right, "UIPanelButtonTemplate")
+    layoutRowBtn:SetSize(56, 20)
+    layoutRowBtn:SetPoint("TOPLEFT", right, "TOPLEFT", 10, -92)
+    layoutRowBtn:SetText("Row")
+    PCP_SkinButton(layoutRowBtn)
+
+    local layoutGridBtn = CreateFrame("Button", nil, right, "UIPanelButtonTemplate")
+    layoutGridBtn:SetSize(56, 20)
+    layoutGridBtn:SetPoint("LEFT", layoutRowBtn, "RIGHT", 6, 0)
+    layoutGridBtn:SetText("Grid")
+    PCP_SkinButton(layoutGridBtn)
+
+    local colsLabel = right:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    colsLabel:SetPoint("TOPLEFT", right, "TOPLEFT", 10, -122)
+    colsLabel:SetText("Columns")
+
+    local colsBox = CreateFrame("EditBox", nil, right, "InputBoxTemplate")
+    colsBox:SetSize(40, 20)
+    colsBox:SetPoint("LEFT", colsLabel, "RIGHT", 8, 0)
+    SkinEditBox(colsBox)
+
+    local btnsTitle = right:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    btnsTitle:SetPoint("TOPLEFT", right, "TOPLEFT", 10, -150)
+    btnsTitle:SetText("Buttons")
+
+    local btnScroll = CreateFrame("ScrollFrame", nil, right, "UIPanelScrollFrameTemplate")
+    btnScroll:SetPoint("TOPLEFT", right, "TOPLEFT", 8, -168)
+    btnScroll:SetPoint("BOTTOMRIGHT", right, "BOTTOMRIGHT", -28, 10)
+    SkinScrollFrame(btnScroll)
+    local btnContent = CreateFrame("Frame", nil, btnScroll)
+    btnContent:SetSize(1, 1)
+    btnScroll:SetScrollChild(btnContent)
+    right._pcpBtnRows = {}
+
+    local function RefreshWindowList()
+        for _, b in ipairs(left._pcpListButtons) do
+            if b and b.Hide then b:Hide() end
+        end
+        left._pcpListButtons = {}
+
+        local y = -2
+        for _, id in ipairs(PCPSettings.quick.order) do
+            local def = GetDef(id)
+            if type(def) == "table" then
+                local b = CreateFrame("Button", nil, listContent, "UIPanelButtonTemplate")
+                b:SetSize(156, 22)
+                b:SetPoint("TOPLEFT", listContent, "TOPLEFT", 0, y)
+                b:SetText(tostring(def.title or id))
+                b:SetScript("OnClick", function() SelectWindow(id) end)
+                if id == manager._pcpSelectedWindowId then
+                    local n = b:GetNormalTexture()
+                    if n and n.SetVertexColor then n:SetVertexColor(0.15, 0.17, 0.22, 0.98) end
+                end
+                PCP_SkinButton(b)
+                left._pcpListButtons[#left._pcpListButtons + 1] = b
+                y = y - 24
+            end
+        end
+        listContent:SetHeight(-y + 4)
+    end
+
+    local function RefreshLibrary()
+        for _, b in ipairs(mid._pcpLibButtons) do
+            if b and b.Hide then b:Hide() end
+        end
+        mid._pcpLibButtons = {}
+
+        local filter = string.lower(manager._pcpLibraryFilter or "")
+        local y = -2
+        for _, item in ipairs(PCP_QuickCommandLibrary) do
+            local labelText = tostring(item.label or "")
+            local cmdText = tostring(item.cmd or "")
+            local hay = string.lower(labelText .. " " .. cmdText)
+            if filter == "" or string.find(hay, filter, 1, true) then
+                local b = CreateFrame("Button", nil, libContent, "UIPanelButtonTemplate")
+                b:SetSize(186, 22)
+                b:SetPoint("TOPLEFT", libContent, "TOPLEFT", 0, y)
+                b:SetText(labelText)
+                b:SetScript("OnClick", function()
+                    local def = GetDef(manager._pcpSelectedWindowId)
+                    if type(def) ~= "table" then return end
+                    def.buttons = def.buttons or {}
+                    def.buttons[#def.buttons + 1] = { label = labelText, cmd = cmdText }
+                    PCP_QuickRebuild(def.id, def.id == "quick" and "PCPQuickBarFrame" or nil)
+                    if manager._pcpRefreshAll then manager._pcpRefreshAll() end
+                end)
+                PCP_SkinButton(b)
+                mid._pcpLibButtons[#mid._pcpLibButtons + 1] = b
+                y = y - 24
+            end
+        end
+        libContent:SetHeight(-y + 4)
+    end
+
+    local function RefreshEditor()
+        local def = GetDef(manager._pcpSelectedWindowId)
+        if type(def) ~= "table" then return end
+
+        titleBox:SetText(tostring(def.title or def.id or ""))
+        visibleCB:SetChecked(def.visible ~= false)
+        colsBox:SetText(tostring((type(def.layout) == "table" and def.layout.columns) or 3))
+
+        local function ApplyLayout(v)
+            def.layout = def.layout or {}
+            def.layout.type = v
+            PCP_QuickRebuild(def.id, def.id == "quick" and "PCPQuickBarFrame" or nil)
+            if manager._pcpRefreshAll then manager._pcpRefreshAll() end
+        end
+
+        layoutRowBtn:SetScript("OnClick", function() ApplyLayout("row") end)
+        layoutGridBtn:SetScript("OnClick", function() ApplyLayout("grid") end)
+
+        local isGrid = (type(def.layout) == "table" and def.layout.type == "grid")
+        local n1 = layoutRowBtn:GetNormalTexture()
+        local n2 = layoutGridBtn:GetNormalTexture()
+        if n1 and n1.SetVertexColor then
+            if isGrid then
+                n1:SetVertexColor(0.11, 0.12, 0.15, 0.95)
+            else
+                n1:SetVertexColor(0.15, 0.17, 0.22, 0.98)
+            end
+        end
+        if n2 and n2.SetVertexColor then
+            if isGrid then
+                n2:SetVertexColor(0.15, 0.17, 0.22, 0.98)
+            else
+                n2:SetVertexColor(0.11, 0.12, 0.15, 0.95)
+            end
+        end
+
+        titleBox:SetScript("OnEnterPressed", function(self)
+            def.title = self:GetText() or def.title
+            self:ClearFocus()
+            if manager._pcpRefreshAll then manager._pcpRefreshAll() end
+            PCP_QuickRebuild(def.id, def.id == "quick" and "PCPQuickBarFrame" or nil)
+        end)
+
+        colsBox:SetScript("OnEnterPressed", function(self)
+            def.layout = def.layout or {}
+            local v = tonumber(self:GetText()) or def.layout.columns or 3
+            if v < 1 then v = 1 end
+            if v > 6 then v = 6 end
+            def.layout.columns = v
+            self:SetText(tostring(v))
+            self:ClearFocus()
+            PCP_QuickRebuild(def.id, def.id == "quick" and "PCPQuickBarFrame" or nil)
+            if manager._pcpRefreshAll then manager._pcpRefreshAll() end
+        end)
+
+        for _, row in ipairs(right._pcpBtnRows) do
+            if row and row.Hide then row:Hide() end
+        end
+        right._pcpBtnRows = {}
+
+        local y = -2
+        def.buttons = def.buttons or {}
+        for i, bd in ipairs(def.buttons) do
+            local row = CreateFrame("Frame", nil, btnContent)
+            row:SetSize(186, 22)
+            row:SetPoint("TOPLEFT", btnContent, "TOPLEFT", 0, y)
+
+            local lbl = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            lbl:SetPoint("LEFT", row, "LEFT", 0, 0)
+            lbl:SetText(tostring(bd.label or "") .. "  (" .. tostring(bd.cmd or "") .. ")")
+
+            local up = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+            up:SetSize(18, 18)
+            up:SetPoint("RIGHT", row, "RIGHT", -42, 0)
+            up:SetText("^")
+            up:SetScript("OnClick", function()
+                if i <= 1 then return end
+                def.buttons[i], def.buttons[i - 1] = def.buttons[i - 1], def.buttons[i]
+                PCP_QuickRebuild(def.id, def.id == "quick" and "PCPQuickBarFrame" or nil)
+                if manager._pcpRefreshAll then manager._pcpRefreshAll() end
+            end)
+
+            local dn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+            dn:SetSize(18, 18)
+            dn:SetPoint("RIGHT", row, "RIGHT", -22, 0)
+            dn:SetText("v")
+            dn:SetScript("OnClick", function()
+                if i >= #def.buttons then return end
+                def.buttons[i], def.buttons[i + 1] = def.buttons[i + 1], def.buttons[i]
+                PCP_QuickRebuild(def.id, def.id == "quick" and "PCPQuickBarFrame" or nil)
+                if manager._pcpRefreshAll then manager._pcpRefreshAll() end
+            end)
+
+            local rm = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+            rm:SetSize(18, 18)
+            rm:SetPoint("RIGHT", row, "RIGHT", -2, 0)
+            rm:SetText("x")
+            rm:SetScript("OnClick", function()
+                table.remove(def.buttons, i)
+                PCP_QuickRebuild(def.id, def.id == "quick" and "PCPQuickBarFrame" or nil)
+                if manager._pcpRefreshAll then manager._pcpRefreshAll() end
+            end)
+
+            PCP_SkinAllButtons(row)
+            right._pcpBtnRows[#right._pcpBtnRows + 1] = row
+            y = y - 24
+        end
+        btnContent:SetHeight(-y + 4)
+    end
+
+    function manager._pcpRefreshAll()
+        RefreshWindowList()
+        RefreshLibrary()
+        RefreshEditor()
+        PCP_SkinAllButtons(manager)
+        PCP_ApplyScale(manager)
+        PCP_ApplyFontMode(manager)
+    end
+    manager._pcpRefreshLibrary = RefreshLibrary
+
+    manager._pcpRefreshAll()
+    manager:Show()
+end
+
 local function OnPlayerLogin(self, event)
     PCP_InitSettings()
     if isVanilla then
+        print("Vanilla client loaded: " .. version)
         print("Vanilla client loaded: " .. version)
     else
         print("Classic client loaded: " .. version)
@@ -576,6 +1406,8 @@ local function OnPlayerLogin(self, event)
 
     PCP_RegisterAddonPrefix()
     PCP_BroadcastVersion()
+
+    PCP_QuickRebuildAllVisible()
 end
 
 local eventFrame = CreateFrame("Frame")
@@ -955,6 +1787,9 @@ local function PCP_InitCollapsible(frame)
                     PCPSettings.ui.scale = PCP_ClampScale(value)
                 end
                 PCP_ApplyScale(frame)
+                if _G.PCPQuickBarFrame then
+                    PCP_ApplyScale(_G.PCPQuickBarFrame)
+                end
             end)
 
             local cb = CreateFrame("CheckButton", nil, popup, "UICheckButtonTemplate")
@@ -969,6 +1804,9 @@ local function PCP_InitCollapsible(frame)
                     PCPSettings.ui.bigFont = self:GetChecked() and true or false
                 end
                 PCP_ApplyFontMode(frame)
+                if _G.PCPQuickBarFrame then
+                    PCP_ApplyFontMode(_G.PCPQuickBarFrame)
+                end
                 if frame._pcpLayout then
                     frame._pcpLayout:Relayout()
                 end
@@ -1022,6 +1860,7 @@ local function PCP_InitCollapsible(frame)
 
             menu[#menu + 1] = { text = "", notCheckable = true, disabled = true }
             menu[#menu + 1] = { text = "UI Settings...", notCheckable = true, func = ToggleUiPopup }
+            menu[#menu + 1] = { text = "Quick Windows...", notCheckable = true, func = PCP_OpenQuickWindowsManager }
             menu[#menu + 1] = { text = "", notCheckable = true, disabled = true }
             menu[#menu + 1] = {
                 text = "Show All",
@@ -1218,6 +2057,9 @@ local function PCPFrame_OnShow(frame)
     end
     if frame._pcpLayout then
         frame._pcpLayout:Relayout()
+    end
+    if PCP_QuickRebuildAllVisible then
+        PCP_QuickRebuildAllVisible()
     end
 end
 
@@ -2431,6 +3273,23 @@ function SlashCmdList.PCP(msg, editbox)
 			PCPFrame:Show()
         end
     end
+end
+
+SLASH_PCPBAR1 = "/pcpbar"
+SLASH_PCPBAR2 = "/pcpquick"
+SlashCmdList["PCPBAR"] = function()
+    PCP_InitSettings()
+    if type(PCPSettings) ~= "table" or type(PCPSettings.quick) ~= "table" or type(PCPSettings.quick.windows) ~= "table" then return end
+    local def = PCPSettings.quick.windows["quick"]
+    if type(def) ~= "table" then return end
+    def.visible = not (def.visible ~= false)
+    PCP_QuickRebuild("quick", "PCPQuickBarFrame")
+end
+
+SLASH_PCPWINS1 = "/pcpwins"
+SLASH_PCPWINS2 = "/pcpwindows"
+SlashCmdList["PCPWINS"] = function()
+    PCP_OpenQuickWindowsManager()
 end
 
 function ShowToggle()

@@ -1,4 +1,4 @@
-# PCP (PartyBot Control Panel) — 2.0.0 - Custom
+# PCP (PartyBot Control Panel) — 2.0.0 - Custom ![Downloads](https://img.shields.io/github/downloads/Litas-dev/PCP/total?label=Downloads&logo=github&color=blue)
 PCP is a PartyBot Control Panel addon for SoloCraft / PartyBot commands. This is a custom fork.
 
 ## Install
@@ -20,7 +20,7 @@ PCP is a PartyBot Control Panel addon for SoloCraft / PartyBot commands. This is
   - Fixes load order / double-loading issues that could break the UI.
   - PCPFrame hidden by default at login (no more “stuck on screen”).
   - Minimap button created on `PLAYER_LOGIN` (prevents early-load issues).
-- Modern UI (matches BGUltimate styling):
+- Modern UI:
   - Dark flat frame styling + modernized text buttons.
   - Minimap button styled and cropped.
   - Adds tabs: Bots / Commands / Marks / All.
@@ -37,3 +37,5 @@ PCP is a PartyBot Control Panel addon for SoloCraft / PartyBot commands. This is
 
 ## Notes
 - Upstream: https://github.com/Litas-dev/PCP
+
+
