@@ -13,6 +13,12 @@ PCP is a PartyBot Control Panel addon for SoloCraft / PartyBot commands. This is
 - Releases: https://github.com/Litas-dev/PCP/releases
 
 ## Changelog
+### 2.1.2 - Custom
+- Version updated to `2.1.2 - Custom` (TOC + in-window version label).
+- Macro Mode:
+  - `/pcpmacro on` inserts commands into the macro editor instead of sending them to chat.
+  - `/pcpmacro off` sends commands normally again (RAID/PARTY/SAY).
+
 ### 2.1.0 - Custom
 - Version updated to `2.1.0 - Custom` (TOC + in-window version label).
 - Quick Windows system:
@@ -61,5 +67,3 @@ PCP is a PartyBot Control Panel addon for SoloCraft / PartyBot commands. This is
 
 ## Notes
 - Upstream: https://github.com/Litas-dev/PCP
-
-

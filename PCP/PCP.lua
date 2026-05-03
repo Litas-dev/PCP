@@ -2133,6 +2133,40 @@ CMD_TOGGLE_HELM = ".partybot togglehelm ";
 CMD_TOGGLE_CLOAK = ".partybot togglecloak ";
 CMD_GENERAL = ".partybot ";
 
+macroMode = false
+
+function GetChatChannel()
+    if IsInRaid and IsInRaid() then
+        return "RAID"
+    elseif IsInGroup and IsInGroup() then
+        return "PARTY"
+    else
+        return "SAY"
+    end
+end
+
+function DispatchCommand(text)
+    if not text or text == "" then return end
+    text = string.gsub(text, "^%s+", "")
+    text = string.gsub(text, "%s+$", "")
+    if macroMode then
+        if not MacroFrame and MacroFrame_LoadUI then
+            MacroFrame_LoadUI()
+        end
+        if MacroFrame and not MacroFrame:IsShown() and ShowMacroFrame then
+            ShowMacroFrame()
+        end
+        if MacroFrameText then
+            MacroFrameText:SetFocus()
+            MacroFrameText:Insert(text .. "\n")
+        else
+            DEFAULT_CHAT_FRAME:AddMessage("[PCP] Could not find MacroFrameText. Open /macro once and try again.")
+        end
+        return
+    end
+    SendChatMessage(text, GetChatChannel())
+end
+
 AddCmd = ""
 CmdItr = 1
 function CmdStackHide()
@@ -2202,15 +2236,15 @@ function CmdSUB()
 end
 
 function SetCommand(arg)
-		SendChatMessage(CMD_GENERAL .. arg);
+		DispatchCommand(CMD_GENERAL .. arg);
 end
 
 function SetPause()
-		SendChatMessage(CMD_GENERAL .. " pause ");
+		DispatchCommand(CMD_GENERAL .. "pause");
 end
 
 function SetUnpause()
-		SendChatMessage(CMD_GENERAL .. " unpause ");
+		DispatchCommand(CMD_GENERAL .. "unpause");
 end
 
 AddMark = "ccmark"
@@ -2243,19 +2277,19 @@ function MarkSUB()
 end
 
 function SetMark(self, arg)
-	SendChatMessage(CMD_GENERAL .. AddMark .. " " .. arg);
+	DispatchCommand(CMD_GENERAL .. AddMark .. " " .. arg);
 end
 
 function ShowMark()
-	SendChatMessage(CMD_GENERAL .. AddMark);
+	DispatchCommand(CMD_GENERAL .. AddMark);
 end
 
 function ClearMark()
-	SendChatMessage(CMD_GENERAL .. "clear " .. AddMark);
+	DispatchCommand(CMD_GENERAL .. "clear " .. AddMark);
 end
 
 function ClearAllMark()
-	SendChatMessage(CMD_GENERAL .. "clear");
+	DispatchCommand(CMD_GENERAL .. "clear");
 end
 
 AddToggle = "aoe"
@@ -2294,23 +2328,23 @@ function ToggleSUB()
 end
 
 function SetToggle()
-	SendChatMessage(CMD_GENERAL .."toggle " .. AddToggle);
+	DispatchCommand(CMD_GENERAL .."toggle " .. AddToggle);
 end
 
 function SubPartyBotClone(self)
-	SendChatMessage(CMD_PARTYBOT_CLONE);
+	DispatchCommand(CMD_PARTYBOT_CLONE);
 end
 
 function SubPartyBotRemove(self)
-	SendChatMessage(CMD_PARTYBOT_REMOVE);
+	DispatchCommand(CMD_PARTYBOT_REMOVE);
 end
 
 function SubPartyBotMoveAll()
-	SendChatMessage(CMD_PARTYBOT_MAll);
+	DispatchCommand(CMD_PARTYBOT_MAll);
 end
 
 function SubPartyBotStayAll()
-	SendChatMessage(CMD_PARTYBOT_SAll);
+	DispatchCommand(CMD_PARTYBOT_SAll);
 end
 
 AddClass = "warrior"
@@ -3161,11 +3195,11 @@ function SetBGSUB()
 end
 
 function SubPartyBotAddAdvanced(self)
-	SendChatMessage(CMD_PARTYBOT_ADD .. AddClass .. " " .. AddRole .. " " .. AddGender);
+	DispatchCommand(CMD_PARTYBOT_ADD .. AddClass .. " " .. AddRole .. " " .. AddGender);
 end
 
 function SubPartyBotAdd(self, arg)
-	SendChatMessage(CMD_PARTYBOT_ADD .. arg);
+	DispatchCommand(CMD_PARTYBOT_ADD .. arg);
 end
 
 function Brackets()
@@ -3181,11 +3215,11 @@ end
 
 function SubBattleBotAdd(self, arg1, arg2)
 	RanBotLevel = Brackets()
-	SendChatMessage(CMD_BATTLEBOT_ADD .. arg1 .. " " .. arg2 .. " " .. RanBotLevel);
+	DispatchCommand(CMD_BATTLEBOT_ADD .. arg1 .. " " .. arg2 .. " " .. RanBotLevel);
 end
 
 function SubBattleGo(self, arg1)
-	SendChatMessage(CMD_BATTLEGROUND_GO .. arg1);
+	DispatchCommand(CMD_BATTLEGROUND_GO .. arg1);
 end
 
 function CloseFrame()
@@ -3284,6 +3318,20 @@ SlashCmdList["PCPBAR"] = function()
     if type(def) ~= "table" then return end
     def.visible = not (def.visible ~= false)
     PCP_QuickRebuild("quick", "PCPQuickBarFrame")
+end
+
+SLASH_PCPMACRO1 = "/pcpmacro"
+SlashCmdList["PCPMACRO"] = function(msg)
+    msg = msg or ""
+    msg = string.lower(string.gsub(msg, "^%s*(.-)%s*$", "%1"))
+    if msg == "on" then
+        macroMode = true
+    elseif msg == "off" then
+        macroMode = false
+    else
+        macroMode = not macroMode
+    end
+    DEFAULT_CHAT_FRAME:AddMessage(macroMode and "[PCP] Macro mode enabled" or "[PCP] Macro mode disabled")
 end
 
 SLASH_PCPWINS1 = "/pcpwins"
